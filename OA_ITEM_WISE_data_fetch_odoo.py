@@ -170,4 +170,18 @@ if __name__ == "__main__":
         for r in records:
             all_flat_records.extend(flatten_sale_order(r))  # explode order lines into separate rows
         df = pd.DataFrame(all_flat_records)
-        paste_to_gsheet(df, sheet_tab)
+        
+        group_cols = ["Order Lines/Order Reference", 
+              "Order Lines/Slider Code (SFG)", 
+              "Order Lines/Product Code"]
+
+        agg_dict = {
+            "Order Lines/Quantity": "sum",
+            "Order Lines/Subtotal": "sum",
+            "Order Lines/Unit Price": "mean"  # average
+        }
+
+        # Group by and aggregate
+        df_grouped = df.groupby(group_cols, as_index=False).agg(agg_dict)
+        
+        paste_to_gsheet(df_grouped, sheet_tab)
