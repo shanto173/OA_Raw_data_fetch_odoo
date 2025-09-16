@@ -123,42 +123,81 @@ def safe_get(obj, *keys):
 
 def flatten_sale_order(record):
     flat_records = []
-    for line in record["order_line"]:
-        order = line.get("order_id", {})
-        buyer = safe_get(order, "buyer_name")
-        customer = safe_get(order, "partner_id")
-        flat_records.append({
-            "Order Lines/Order Reference": safe_get(order, "name"),
-            "Order Lines/Order Reference/Sales Order Ref.": safe_get(order, "order_ref"),
-            "Order Lines/Order Reference/Buyer": buyer[1] if isinstance(buyer, (list, tuple)) else buyer,
-            "Order Lines/Order Reference/Buyer/Brand Group": safe_get(buyer, "brand"),
-            "Order Lines/Order Reference/Buying House": safe_get(order, "buying_house", "display_name"),
-            "Order Lines/Order Reference/Company": safe_get(order, "company_id", "display_name"),
-            "Order Lines/Order Reference/Customer": customer[1] if isinstance(customer, (list, tuple)) else customer,
-            "Order Lines/Order Reference/Customer/Group": safe_get(customer, "group"),
-            "Order Lines/Order Reference/Order Date": safe_get(order, "date_order"),
-            "Order Lines/Order Reference/Sales Team": safe_get(order, "team_id", "display_name"),
-            "Order Lines/Order Reference/Salesperson": safe_get(order, "user_id", "display_name"),
-            "Order Lines/Order Reference/LC Number": safe_get(order, "lc_number"),
-            "Order Lines/Order Reference/Payment Terms": safe_get(order, "payment_term_id", "display_name"),
-            "Order Lines/Order Reference/Status": safe_get(order, "state"),
-            "Order Lines/Product Template/FG Category": safe_get(line, "product_template_id", "fg_categ_type"),
-            "Order Lines/Quantity": line.get("product_uom_qty"),
-            "Order Lines/Total": line.get("price_total"),
-            "Order Lines/Slider Code (SFG)": line.get("slidercodesfg"),
-        })
+
+    # Helper to safely get nested values
+    def safe_val(obj, key, subkey=None):
+        v = obj.get(key) if isinstance(obj, dict) else None
+        if isinstance(v, dict) and subkey:
+            return v.get(subkey, "")
+        elif isinstance(v, (list, tuple)) and subkey is None:
+            return v[1] if len(v) > 1 else ""
+        elif v is False or v is None:
+            return ""
+        return v
+
+    # Extract order-level fields once
+    order = record
+    buyer = record.get("buyer_name", "")
+    customer = record.get("partner_id", "")
+
+    for line in record.get("order_line", []):
+        flat_line = {
+            "Order Lines/Order Reference": safe_val(order, "name"),
+            "Order Lines/Order Reference/Sales Order Ref.": safe_val(order, "order_ref"),
+            "Order Lines/Order Reference/Buyer": safe_val(buyer, None),
+            "Order Lines/Order Reference/Buyer/Brand Group": safe_val(buyer, "brand"),
+            "Order Lines/Order Reference/Buying House": safe_val(order, "buying_house", "display_name"),
+            "Order Lines/Order Reference/Company": safe_val(order, "company_id", "display_name"),
+            "Order Lines/Order Reference/Customer": safe_val(customer, None),
+            "Order Lines/Order Reference/Customer/Group": safe_val(customer, "group"),
+            "Order Lines/Order Reference/Order Date": safe_val(order, "date_order"),
+            "Order Lines/Order Reference/Sales Team": safe_val(order, "team_id", "display_name"),
+            "Order Lines/Order Reference/Salesperson": safe_val(order, "user_id", "display_name"),
+            "Order Lines/Order Reference/LC Number": safe_val(order, "lc_number"),
+            "Order Lines/Order Reference/Payment Terms": safe_val(order, "payment_term_id", "display_name"),
+            "Order Lines/Order Reference/Status": safe_val(order, "state"),
+            "Order Lines/Product Template/FG Category": (
+                line.get("product_template_id")[1] 
+                if isinstance(line.get("product_template_id"), (list, tuple)) 
+                else safe_val(line, "product_template_id", "fg_categ_type")
+            ),
+            "Order Lines/Quantity": line.get("product_uom_qty", 0),
+            "Order Lines/Total": line.get("price_total", 0),
+            "Order Lines/Slider Code (SFG)": line.get("slidercodesfg", ""),
+        }
+
+        # Convert any remaining dicts or None to safe string
+        for k, v in flat_line.items():
+            if isinstance(v, dict):
+                flat_line[k] = v.get("display_name", str(v))
+            elif v is False or v is None:
+                flat_line[k] = ""
+
+        flat_records.append(flat_line)
+
     return flat_records
+
 
 # --------- Paste to Google Sheet ---------
 def paste_to_gsheet(df, sheet_name):
     worksheet = gc.open_by_key(GOOGLE_SHEET_ID).worksheet(sheet_name)
+    
     if df.empty:
         print(f"⚠️ Skip: {sheet_name} is empty")
         return
-    worksheet.clear()
-    set_with_dataframe(worksheet, df)
-    worksheet.update("A1", [["Last Updated", datetime.now(pytz.timezone("Asia/Dhaka")).strftime("%Y-%m-%d %H:%M:%S")]])
-    print(f"✅ Data pasted to {sheet_name}")
+
+    # Clear range A:R
+    worksheet.batch_clear(["A:R"])
+
+    # Paste the dataframe starting from A1
+    set_with_dataframe(worksheet, df, include_index=False, include_column_header=True, resize=True)
+
+    # Add timestamp to S1
+    local_time = datetime.now(pytz.timezone("Asia/Dhaka")).strftime("%Y-%m-%d %H:%M:%S")
+    worksheet.update("S1", [[f"Last Updated: {local_time}"]])
+
+    print(f"✅ Data pasted to {sheet_name} and timestamp updated in S1")
+
 
 # --------- Main ---------
 if __name__ == "__main__":
