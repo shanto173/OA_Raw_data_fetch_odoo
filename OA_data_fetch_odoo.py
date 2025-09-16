@@ -125,29 +125,26 @@ def flatten_record(rec):
     }
 
 # --------- Upload to Google Sheet ---------
+    
+    
 def paste_to_gsheet(df, sheet_name):
-    """
-    Paste a pandas DataFrame to a Google Sheet tab at once.
-    Clears columns A:N and writes a timestamp in N1.
-    """
-    sh = gc.open_by_key(GOOGLE_SHEET_ID)
-    worksheet = sh.worksheet(sheet_name)
-
+    worksheet = gc.open_by_key(GOOGLE_SHEET_ID).worksheet(sheet_name)
     if df.empty:
         print(f"Skip: {sheet_name} DataFrame is empty, not pasting.")
         return
 
-    # Clear columns A:N
+    # Clear only the range A:N
     worksheet.batch_clear(["A:N"])
 
-    # Paste entire DataFrame at once
-    set_with_dataframe(worksheet, df, include_index=False, include_column_header=True, resize=True)
+    # Paste the dataframe
+    set_with_dataframe(worksheet, df)
+
     print(f"✅ Data pasted to Google Sheet ({sheet_name}).")
 
-    # Add timestamp in N1
+    # Add timestamp to N1 using named arguments (new gspread)
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.update("N1", [[f"{local_time}"]])
+    worksheet.update(range_name="N1", values=[[local_time]])
     print(f"Timestamp written to N1: {local_time}")
 
 # --------- Main ---------
