@@ -17,7 +17,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests pandas gspread google-auth
+          pip install requirements.txt
 
       - name: Run OA Data Fetch
         env:

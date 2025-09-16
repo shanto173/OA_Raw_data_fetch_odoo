@@ -5,6 +5,9 @@ import requests
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+from gspread_dataframe import set_with_dataframe
+from datetime import datetime
+import pytz
 
 # --------- Config from Environment ---------
 ODOO_URL = os.getenv("ODOO_URL")
@@ -122,16 +125,30 @@ def flatten_record(rec):
     }
 
 # --------- Upload to Google Sheet ---------
-def upload_to_sheet(df, sheet_name):
+def paste_to_gsheet(df, sheet_name):
+    """
+    Paste a pandas DataFrame to a Google Sheet tab at once.
+    Clears columns A:N and writes a timestamp in N1.
+    """
     sh = gc.open_by_key(GOOGLE_SHEET_ID)
-    try:
-        worksheet = sh.worksheet(sheet_name)
-    except gspread.exceptions.WorksheetNotFound:
-        worksheet = sh.add_worksheet(title=sheet_name, rows="1000", cols=str(len(df.columns)))
+    worksheet = sh.worksheet(sheet_name)
 
-    worksheet.clear()
-    worksheet.update([df.columns.values.tolist()] + df.values.tolist())
-    print(f"✅ Data uploaded to Google Sheet tab: {sheet_name}")
+    if df.empty:
+        print(f"Skip: {sheet_name} DataFrame is empty, not pasting.")
+        return
+
+    # Clear columns A:N
+    worksheet.batch_clear(["A:N"])
+
+    # Paste entire DataFrame at once
+    set_with_dataframe(worksheet, df, include_index=False, include_column_header=True, resize=True)
+    print(f"✅ Data pasted to Google Sheet ({sheet_name}).")
+
+    # Add timestamp in N1
+    local_tz = pytz.timezone("Asia/Dhaka")
+    local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
+    worksheet.update("N1", [[f"{local_time}"]])
+    print(f"Timestamp written to N1: {local_time}")
 
 # --------- Main ---------
 if __name__ == "__main__":
@@ -139,7 +156,10 @@ if __name__ == "__main__":
     company_map = [(1, "OA_RAW_DATA_ZIP"), (3, "OA_RAW_DATA_MT")]
 
     for company_id, sheet_tab in company_map:
+        # Fetch data from Odoo
         records = fetch_all_data(uid, company_id)
+        # Flatten records for Google Sheet
         flat_records = [flatten_record(r) for r in records]
         df = pd.DataFrame(flat_records)
-        upload_to_sheet(df, sheet_tab)
+        # Paste entire DataFrame at once to Google Sheet
+        paste_to_gsheet(df, sheet_tab)
