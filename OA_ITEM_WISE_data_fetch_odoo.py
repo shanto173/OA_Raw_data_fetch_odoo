@@ -111,12 +111,12 @@ def safe_get(obj, key, default=''):
 # --------- Flatten ---------
 def flatten_record(rec):
     return {
-        "Order ID": safe_get(rec.get("order_id"), "display_name"),
-        "Quantity": safe_get(rec.get("product_uom_qty"), "display_name"),
-        "Unit Price": safe_get(rec.get("price_unit"), "display_name"),
-        "Slider Code": safe_get(rec.get("slidercodesfg"), "display_name"),
-        "Value": safe_get(rec.get("price_subtotal"), "display_name"),
-        "Product Code": safe_get(rec.get("product_code"), "display_name")
+        "Order ID": safe_get(rec.get("order_line/order_id"), "display_name"),
+        "Quantity": safe_get(rec.get("order_line/product_uom_qty"), ""),
+        "Unit Price": safe_get(rec.get("order_line/price_unit"), ""),
+        "Slider Code": safe_get(rec.get("order_line/slidercodesfg"), ""),
+        "Value": safe_get(rec.get("order_line/price_subtotal"), ""),
+        "Product Code": safe_get(rec.get("order_line/product_code"), "")
     }
 
 # --------- Upload to Google Sheet ---------
