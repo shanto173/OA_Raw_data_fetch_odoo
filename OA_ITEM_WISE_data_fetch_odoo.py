@@ -120,25 +120,24 @@ def safe_get(obj, key, default=''):
     return default
 
 # --------- Flatten Records ---------
+# --------- Flatten Records (One row per order line) ---------
 def flatten_sale_order(rec):
-    flat = {
-        "Order Name": rec.get("name", ""),
-        "Customer": safe_get(rec.get("partner_id"), "display_name"),
-        "Company": safe_get(rec.get("company_id"), "display_name"),
-        "State": rec.get("state", "")
-    }
-
     order_lines = rec.get("order_line", [])
-    # Flatten relational fields
-    flat['Order Lines/Order Reference'] = ' / '.join([safe_get(ol.get("order_id"), "display_name") for ol in order_lines])
-    flat['Order Lines/Quantity'] = ' / '.join([str(ol.get("product_uom_qty", '')) for ol in order_lines])
-    flat['Order Lines/Unit Price'] = ' / '.join([str(ol.get("price_unit", '')) for ol in order_lines])
-    flat['Order Lines/Slider Code (SFG)'] = ' / '.join([str(ol.get("slidercodesfg", '')) for ol in order_lines])
-    flat['Order Lines/Subtotal'] = ' / '.join([str(ol.get("price_subtotal", '')) for ol in order_lines])
-    flat['Order Lines/Product Code'] = ' / '.join([str(ol.get("product_code", '')) for ol in order_lines])
-    flat['Order Lines/Material Code'] = ' / '.join([str(ol.get("material_code", '')) for ol in order_lines])
+    rows = []
 
-    return flat
+    for ol in order_lines:
+        row = {
+            "Order Lines/Order Reference": safe_get(ol.get("order_id"), "display_name"),
+            "Order Lines/Quantity": ol.get("product_uom_qty", 0),
+            "Order Lines/Unit Price": ol.get("price_unit", 0),
+            "Order Lines/Slider Code (SFG)": ol.get("slidercodesfg", ""),
+            "Order Lines/Subtotal": ol.get("price_subtotal", 0),
+            "Order Lines/Product Code": ol.get("product_code", ""),
+            "Order Lines/Material Code": ol.get("material_code", "")
+        }
+        rows.append(row)
+    return rows
+
 
 # --------- Upload to Google Sheet ---------
 def paste_to_gsheet(df, sheet_name):
@@ -167,6 +166,8 @@ if __name__ == "__main__":
 
     for company_id, sheet_tab in company_map:
         records = fetch_sale_orders(uid, company_id)
-        flat_records = [flatten_sale_order(r) for r in records]
-        df = pd.DataFrame(flat_records)
+        all_flat_records = []
+        for r in records:
+            all_flat_records.extend(flatten_sale_order(r))  # explode order lines into separate rows
+        df = pd.DataFrame(all_flat_records)
         paste_to_gsheet(df, sheet_tab)
