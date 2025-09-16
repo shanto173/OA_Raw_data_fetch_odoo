@@ -1,7 +1,9 @@
 name: OA Data Fetch
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:   # Manual trigger
+  schedule:           # Scheduled trigger
+    - cron: "0 22 * * *"  # 22:00 UTC = 4:00 AM BD time daily
 
 jobs:
   fetch-oa-data:
