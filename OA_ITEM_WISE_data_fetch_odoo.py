@@ -103,46 +103,21 @@ def fetch_all_data(uid, company_id, batch_size=1000):
     return all_records
 
 # --------- Safe Getter ---------
-def safe_get(obj, key):
-    """Helper to safely get a nested field value."""
+def safe_get(obj, key, default=''):
     if isinstance(obj, dict):
-        return obj.get(key, "")
-    return ""
+        return obj.get(key, default)
+    return default
 
-def flatten_record_order_lines(rec):
-    """
-    Flatten each order line from a sale.order record into a dictionary.
-    """
-    flat_records = []
-    order_lines = rec.get("order_line", [])
-    
-    if not order_lines:
-        # If no order lines, return one row with empty line data
-        flat_records.append({
-            "Order Lines/Order Reference": "",
-            "Order Lines/Quantity": "",
-            "Order Lines/Unit Price": "",
-            "Order Lines/Slider Code (SFG)": "",
-            "Order Lines/Subtotal": "",
-            "Order Lines/Product Code": "",
-            "Order Lines/Material Code": ""
-        })
-        return flat_records
-
-    for line in order_lines:
-        flat = {
-            "Order Lines/Order Reference": safe_get(line.get("order_id"), "display_name"),
-            "Order Lines/Quantity": line.get("product_uom_qty", ""),
-            "Order Lines/Unit Price": line.get("price_unit", ""),
-            "Order Lines/Slider Code (SFG)": line.get("slidercodesfg", ""),
-            "Order Lines/Subtotal": line.get("price_subtotal", ""),
-            "Order Lines/Product Code": line.get("product_code", ""),
-            "Order Lines/Material Code": line.get("material_code", "")
-        }
-        flat_records.append(flat)
-
-    return flat_records
-
+# --------- Flatten ---------
+def flatten_record(rec):
+    return {
+        "Order ID": safe_get(rec.get("order_id"), "display_name"),
+        "Quantity": safe_get(rec.get("product_uom_qty"), "display_name"),
+        "Unit Price": safe_get(rec.get("price_unit"), "display_name"),
+        "Slider Code": safe_get(rec.get("slidercodesfg"), "display_name"),
+        "Value": safe_get(rec.get("price_subtotal"), "display_name"),
+        "Product Code": safe_get(rec.get("product_code"), "display_name")
+    }
 
 # --------- Upload to Google Sheet ---------
     
@@ -154,7 +129,7 @@ def paste_to_gsheet(df, sheet_name):
         return
 
     # Clear only the range A:N
-    worksheet.batch_clear(["A:I"])
+    worksheet.batch_clear(["A:F"])
 
     # Paste the dataframe
     set_with_dataframe(worksheet, df)
@@ -164,8 +139,8 @@ def paste_to_gsheet(df, sheet_name):
     # Add timestamp to N1 using named arguments (new gspread)
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.update(range_name="I1", values=[[local_time]])
-    print(f"Timestamp written to I1: {local_time}")
+    worksheet.update(range_name="G1", values=[[local_time]])
+    print(f"Timestamp written to G1: {local_time}")
 
 # --------- Main ---------
 if __name__ == "__main__":
@@ -176,7 +151,7 @@ if __name__ == "__main__":
         # Fetch data from Odoo
         records = fetch_all_data(uid, company_id)
         # Flatten records for Google Sheet
-        flat_records = [flatten_record_order_lines(r) for r in records]
+        flat_records = [flatten_record(r) for r in records]
         df = pd.DataFrame(flat_records)
         # Paste entire DataFrame at once to Google Sheet
         paste_to_gsheet(df, sheet_tab)
