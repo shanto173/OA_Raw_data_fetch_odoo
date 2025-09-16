@@ -133,7 +133,7 @@ def flatten_sale_order(rec):
             "Order Lines/Slider Code (SFG)": ol.get("slidercodesfg", ""),
             "Order Lines/Subtotal": ol.get("price_subtotal", 0),
             "Order Lines/Product Code": ol.get("product_code", ""),
-            "Order Lines/Material Code": ol.get("material_code", "")
+            # "Order Lines/Material Code": ol.get("material_code", "")
         }
         rows.append(row)
     return rows
