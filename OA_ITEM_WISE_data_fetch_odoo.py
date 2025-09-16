@@ -194,4 +194,4 @@ if __name__ == "__main__":
         # Group by and aggregate
         df_grouped = df.groupby(group_cols, as_index=False).agg(agg_dict)
         
-        paste_to_gsheet(df_grouped, sheet_tab)
+        paste_to_gsheet(df, sheet_tab)
