@@ -26,4 +26,4 @@ jobs:
           ODOO_USERNAME: ${{ secrets.ODOO_USERNAME }}
           ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
           GOOGLE_CREDENTIALS_BASE64: ${{ secrets.GOOGLE_CREDENTIALS_BASE64 }}
-        run: python fetch_oa_data.py
+        run: python OA_data_fetch_odoo.py
