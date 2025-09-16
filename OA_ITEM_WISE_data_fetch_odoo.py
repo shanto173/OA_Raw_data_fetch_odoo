@@ -70,7 +70,8 @@ def fetch_sale_orders(uid, company_id, batch_size=1000):
             "slidercodesfg": {},
             "price_subtotal": {},
             "product_code": {},
-            "material_code": {}
+            "material_code": {},
+            "product_template_id": {"fields": {"fg_categ_type": {}}}  # ✅ NEW
         }}
     }
 
@@ -139,7 +140,10 @@ def flatten_sale_order(rec):
             "Order Lines/Slider Code (SFG)": normalize(ol.get("slidercodesfg")),
             "Order Lines/Subtotal": normalize(ol.get("price_subtotal")),
             "Order Lines/Product Code": normalize(ol.get("product_code")),
-            "Order Lines/Material Code": normalize(ol.get("material_code"))
+            "Order Lines/Material Code": normalize(ol.get("material_code")),
+            "Order Lines/Product Template/FG Category": normalize(
+                safe_get(ol.get("product_template_id"), "fg_categ_type")
+            )  # ✅ NEW COLUMN
         }
         rows.append(row)
     return rows
@@ -179,7 +183,7 @@ if __name__ == "__main__":
         
         group_cols = ["Order Lines/Order Reference", 
               "Order Lines/Slider Code (SFG)", 
-              "Order Lines/Product Code"]
+              "Order Lines/Product Template/FG Category"]
 
         agg_dict = {
             "Order Lines/Quantity": "sum",
