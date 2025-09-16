@@ -121,19 +121,25 @@ def safe_get(obj, key, default=''):
 
 # --------- Flatten Records ---------
 # --------- Flatten Records (One row per order line) ---------
+def normalize(value):
+    """Convert False/None to empty string, leave numbers as-is."""
+    if value is False or value is None:
+        return ""
+    return value
+
 def flatten_sale_order(rec):
     order_lines = rec.get("order_line", [])
     rows = []
 
     for ol in order_lines:
         row = {
-            "Order Lines/Order Reference": safe_get(ol.get("order_id"), "display_name"),
-            "Order Lines/Quantity": ol.get("product_uom_qty", 0),
-            "Order Lines/Unit Price": ol.get("price_unit", 0),
-            "Order Lines/Slider Code (SFG)": ol.get("slidercodesfg", ""),
-            "Order Lines/Subtotal": ol.get("price_subtotal", 0),
-            "Order Lines/Product Code": ol.get("product_code", ""),
-            # "Order Lines/Material Code": ol.get("material_code", "")
+            "Order Lines/Order Reference": normalize(safe_get(ol.get("order_id"), "display_name")),
+            "Order Lines/Quantity": normalize(ol.get("product_uom_qty")),
+            "Order Lines/Unit Price": normalize(ol.get("price_unit")),
+            "Order Lines/Slider Code (SFG)": normalize(ol.get("slidercodesfg")),
+            "Order Lines/Subtotal": normalize(ol.get("price_subtotal")),
+            "Order Lines/Product Code": normalize(ol.get("product_code")),
+            "Order Lines/Material Code": normalize(ol.get("material_code"))
         }
         rows.append(row)
     return rows
