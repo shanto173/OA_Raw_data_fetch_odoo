@@ -128,25 +128,21 @@ def normalize(value):
         return ""
     return value
 
-def flatten_sale_order(rec):
-    order_lines = rec.get("order_line", [])
-    rows = []
-
-    for ol in order_lines:
-        row = {
-            "Order Lines/Order Reference": normalize(safe_get(ol.get("order_id"), "display_name")),
-            "Order Lines/Quantity": normalize(ol.get("product_uom_qty")),
-            "Order Lines/Unit Price": normalize(ol.get("price_unit")),
-            "Order Lines/Slider Code (SFG)": normalize(ol.get("slidercodesfg")),
-            "Order Lines/Subtotal": normalize(ol.get("price_subtotal")),
-            "Order Lines/Product Code": normalize(ol.get("product_code")),
-            "Order Lines/Material Code": normalize(ol.get("material_code")),
-            "Order Lines/Product Template/FG Category": normalize(
-                safe_get(ol.get("product_template_id"), "fg_categ_type")
-            )  # ✅ NEW COLUMN
+def flatten_sale_order(record):
+    flat_records = []
+    for line in record["order_line"]:
+        flat_line = {
+            "Order Lines/Order Reference": record.get("name"),
+            "Order Lines/Slider Code (SFG)": line.get("slider_code"),
+            "Order Lines/Product Template/FG Category": (
+                line.get("product_template_id")[1] if isinstance(line.get("product_template_id"), (list, tuple)) else None
+            ),
+            "Order Lines/Quantity": line.get("product_uom_qty"),
+            "Order Lines/Subtotal": line.get("price_subtotal"),
+            "Order Lines/Unit Price": line.get("price_unit"),
         }
-        rows.append(row)
-    return rows
+        flat_records.append(flat_line)
+    return flat_records
 
 
 # --------- Upload to Google Sheet ---------
@@ -194,4 +190,4 @@ if __name__ == "__main__":
         # Group by and aggregate
         df_grouped = df.groupby(group_cols, as_index=False).agg(agg_dict)
         
-        paste_to_gsheet(df, sheet_tab)
+        paste_to_gsheet(df_grouped, sheet_tab)
