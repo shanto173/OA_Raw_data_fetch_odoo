@@ -1,3 +1,4 @@
+# sync_odoo_to_gsheets.py
 import os
 import json
 import base64
@@ -15,7 +16,7 @@ ODOO_DB = os.getenv("ODOO_DB")
 ODOO_USERNAME = os.getenv("ODOO_USERNAME")
 ODOO_PASSWORD = os.getenv("ODOO_PASSWORD")
 GOOGLE_CREDENTIALS_BASE64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
-GOOGLE_SHEET_ID = "1V0x5_DJn6bC1xzyMeBglzSeH-eDIWtKG4E5Cv3rwA_I"
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1V0x5_DJn6bC1xzyMeBglzSeH-eDIWtKG4E5Cv3rwA_I")
 
 # Decode Google Service Account credentials
 creds_json = json.loads(base64.b64decode(GOOGLE_CREDENTIALS_BASE64))
@@ -28,6 +29,7 @@ gc = gspread.authorize(creds)
 session = requests.Session()
 session.headers.update({"Content-Type": "application/json"})
 
+
 # --------- Login ---------
 def odoo_login():
     url = f"{ODOO_URL}/web/session/authenticate"
@@ -35,43 +37,120 @@ def odoo_login():
         "jsonrpc": "2.0",
         "method": "call",
         "params": {"db": ODOO_DB, "login": ODOO_USERNAME, "password": ODOO_PASSWORD},
-        "id": 1
+        "id": 3,
     }
     resp = session.post(url, data=json.dumps(payload))
     resp.raise_for_status()
-    result = resp.json().get("result")
-    if not result or "uid" not in result:
-        raise Exception("❌ Odoo login failed")
-    print(f"✅ Logged in! UID: {result['uid']}")
-    return result["uid"]
+    uid = resp.json()["result"]["uid"]
+    print(f"✅ Logged in! UID: {uid}")
+    return uid
 
-# --------- Fetch Data ---------
-def fetch_sale_orders(uid, company_id, batch_size=1000):
-    all_records, offset = [], 0
+
+# --------- Helper to safely get string values ---------
+def get_string_value(field, subfield=None):
+    """
+    Safely extract a string from Odoo API fields.
+    Handles:
+      - dict with display_name or nested fields
+      - int (ID)
+      - str
+      - False/None
+    """
+    if isinstance(field, dict):
+        if subfield:
+            value = field.get(subfield)
+            return get_string_value(value)
+        if "display_name" in field:
+            return str(field["display_name"] or "")
+        # fallback: join all dict values as string
+        return " ".join([str(v) for v in field.values()])
+    elif isinstance(field, int):
+        return str(field)
+    elif field in (False, None):
+        return ""
+    return str(field)
+
+
+# --------- Fetch All Sale Orders for a Company ---------
+def fetch_sale_orders_for_company(uid, company_id, batch_size=2000):
+    all_records = []
+    offset = 0
+
     domain = ["&", ["sales_type", "=", "oa"], ["state", "=", "sale"]]
-
     specification = {
-        "order_line": {"fields": {
-            "order_id": {"fields": {
-                "name": {},
-                "order_ref": {},
-                "buyer_name": {"fields": {"display_name": {}, "brand": {}}},
-                "buying_house": {"fields": {"display_name": {}}},
-                "company_id": {"fields": {"display_name": {}}},
-                "partner_id": {"fields": {"display_name": {}, "group": {}}},
-                "date_order": {},
-                "team_id": {"fields": {"display_name": {}}},
-                "user_id": {"fields": {"display_name": {}}},
-                "lc_number": {},
-                "payment_term_id": {"fields": {"display_name": {}}},
-                "state": {}
-            }},
-            "product_template_id": {"fields": {"fg_categ_type": {}}},
-            "product_uom_qty": {},
-            "price_total": {},
-            "slidercodesfg": {}
-        }}
+        "order_line": {
+            "fields": {
+                "order_id": {
+                    "fields": {
+                        "name": {},
+                        "order_ref": {"fields": {"display_name": {}}},
+                        "buyer_name": {
+                            "fields": {
+                                "display_name": {},
+                                "brand": {"fields": {"display_name": {}}},
+                            }
+                        },
+                        "buying_house": {"fields": {"display_name": {}}},
+                        "company_id": {"fields": {"display_name": {}}},
+                        "partner_id": {
+                            "fields": {
+                                "display_name": {},
+                                "group": {"fields": {"display_name": {}}},
+                            }
+                        },
+                        "date_order": {},
+                        "team_id": {"fields": {"display_name": {}}},
+                        "user_id": {"fields": {"display_name": {}}},
+                        "lc_number": {},
+                        "payment_term_id": {"fields": {"display_name": {}}},
+                        "state": {},
+                    }
+                },
+                "product_template_id": {
+                    "fields": {
+                        "fg_categ_type": {"fields": {"display_name": {}}},
+                    }
+                },
+                "product_uom_qty": {},
+                "price_total": {},
+                "slidercodesfg": {},
+            }
+        }
     }
+
+    context = {
+        "lang": "en_US",
+        "tz": "Asia/Dhaka",
+        "uid": uid,
+        "allowed_company_ids": [company_id],
+        "bin_size": True,
+        "current_company_id": company_id,
+    }
+
+    # Optional: get total count
+    count_payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": "sale.order",
+            "method": "web_search_read",
+            "args": [],
+            "kwargs": {
+                "domain": domain,
+                "specification": {"id": {}},
+                "limit": 1,
+                "context": context,
+            },
+        },
+        "id": 99,
+    }
+    count_resp = session.post(
+        f"{ODOO_URL}/web/dataset/call_kw/sale.order/web_search_read",
+        data=json.dumps(count_payload),
+    )
+    count_resp.raise_for_status()
+    total_count = count_resp.json()["result"]["length"]
+    print(f"🔎 Total records to fetch for company {company_id}: {total_count}")
 
     while True:
         payload = {
@@ -86,117 +165,84 @@ def fetch_sale_orders(uid, company_id, batch_size=1000):
                     "specification": specification,
                     "offset": offset,
                     "limit": batch_size,
-                    "context": {
-                        "lang": "en_US",
-                        "tz": "Asia/Dhaka",
-                        "uid": uid,
-                        "allowed_company_ids": [company_id],
-                        "bin_size": True,
-                        "current_company_id": company_id
-                    },
-                    "count_limit": 10001
-                }
+                    "order": "",
+                    "context": context,
+                    "count_limit": 100000,
+                },
             },
-            "id": 2
+            "id": 3,
         }
-        resp = session.post(f"{ODOO_URL}/web/dataset/call_kw/sale.order/web_search_read", data=json.dumps(payload))
+        resp = session.post(
+            f"{ODOO_URL}/web/dataset/call_kw/sale.order/web_search_read",
+            data=json.dumps(payload),
+        )
         resp.raise_for_status()
         result = resp.json()["result"]
-        records = result["records"]
+        records = result.get("records", [])
         all_records.extend(records)
-        print(f"[Company {company_id}] Fetched {len(records)} records (Total: {len(all_records)})")
+        print(
+            f"Fetched {len(records)} records for company {company_id}, total so far: {len(all_records)}/{total_count}"
+        )
         if len(records) < batch_size:
             break
         offset += batch_size
 
+    print(f"✅ Finished fetching for company {company_id}. Total fetched: {len(all_records)}")
     return all_records
 
-# --------- Flatten ---------
-def safe_get(obj, *keys):
-    """Safely extract nested dict keys."""
-    for key in keys:
-        if isinstance(obj, dict):
-            obj = obj.get(key)
-        else:
-            return ""
-    return obj if obj not in (False, None) else ""
 
-def flatten_sale_order(record):
-    flat_records = []
-
-    # Helper to safely get nested values
-    def safe_val(obj, key, subkey=None):
-        v = obj.get(key) if isinstance(obj, dict) else None
-        if isinstance(v, dict) and subkey:
-            return v.get(subkey, "")
-        elif isinstance(v, (list, tuple)) and subkey is None:
-            return v[1] if len(v) > 1 else ""
-        elif v is False or v is None:
-            return ""
-        return v
-
-    # Extract order-level fields once
-    order = record
-    buyer = record.get("buyer_name", "")
-    customer = record.get("partner_id", "")
-
-    for line in record.get("order_line", []):
-        flat_line = {
-            "Order Lines/Order Reference": safe_val(order, "name"),
-            "Order Lines/Order Reference/Sales Order Ref.": safe_val(order, "order_ref"),
-            "Order Lines/Order Reference/Buyer": safe_val(buyer, None),
-            "Order Lines/Order Reference/Buyer/Brand Group": safe_val(buyer, "brand"),
-            "Order Lines/Order Reference/Buying House": safe_val(order, "buying_house", "display_name"),
-            "Order Lines/Order Reference/Company": safe_val(order, "company_id", "display_name"),
-            "Order Lines/Order Reference/Customer": safe_val(customer, None),
-            "Order Lines/Order Reference/Customer/Group": safe_val(customer, "group"),
-            "Order Lines/Order Reference/Order Date": safe_val(order, "date_order"),
-            "Order Lines/Order Reference/Sales Team": safe_val(order, "team_id", "display_name"),
-            "Order Lines/Order Reference/Salesperson": safe_val(order, "user_id", "display_name"),
-            "Order Lines/Order Reference/LC Number": safe_val(order, "lc_number"),
-            "Order Lines/Order Reference/Payment Terms": safe_val(order, "payment_term_id", "display_name"),
-            "Order Lines/Order Reference/Status": safe_val(order, "state"),
-            "Order Lines/Product Template/FG Category": (
-                line.get("product_template_id")[1] 
-                if isinstance(line.get("product_template_id"), (list, tuple)) 
-                else safe_val(line, "product_template_id", "fg_categ_type")
-            ),
-            "Order Lines/Quantity": line.get("product_uom_qty", 0),
-            "Order Lines/Total": line.get("price_total", 0),
-            "Order Lines/Slider Code (SFG)": line.get("slidercodesfg", ""),
-        }
-
-        # Convert any remaining dicts or None to safe string
-        for k, v in flat_line.items():
-            if isinstance(v, dict):
-                flat_line[k] = v.get("display_name", str(v))
-            elif v is False or v is None:
-                flat_line[k] = ""
-
-        flat_records.append(flat_line)
-
-    return flat_records
+# --------- Flatten Records into Rows ---------
+def flatten_records(records):
+    flat_rows = []
+    for record in records:
+        order_lines = record.get("order_line", [])
+        for line in order_lines:
+            order_id = line.get("order_id", {}) or {}
+            flat_rows.append({
+                "Order Reference": get_string_value(order_id.get("name")),
+                "Sales Order Ref.": get_string_value(order_id.get("order_ref")),
+                "Buyer": get_string_value(order_id.get("buyer_name")),
+                "Brand Group": get_string_value(order_id.get("buyer_name"), "brand"),
+                "Buying House": get_string_value(order_id.get("buying_house")),
+                "Company": get_string_value(order_id.get("company_id")),
+                "Customer": get_string_value(order_id.get("partner_id")),
+                "Customer Group": get_string_value(order_id.get("partner_id"), "group"),
+                "Order Date": get_string_value(order_id.get("date_order")),
+                "Sales Team": get_string_value(order_id.get("team_id")),
+                "Salesperson": get_string_value(order_id.get("user_id")),
+                "FG Category": get_string_value(line.get("product_template_id"), "fg_categ_type"),
+                "Quantity": line.get("product_uom_qty", 0),
+                "Total": line.get("price_total", 0),
+                "Slider Code (SFG)": get_string_value(line.get("slidercodesfg")),
+                "LC Number": get_string_value(order_id.get("lc_number")),
+                "Payment Terms": get_string_value(order_id.get("payment_term_id")),
+                "Status": get_string_value(order_id.get("state")),
+            })
+    return flat_rows
 
 
-# --------- Paste to Google Sheet ---------
 def paste_to_gsheet(df, sheet_name):
-    worksheet = gc.open_by_key(GOOGLE_SHEET_ID).worksheet(sheet_name)
-    
-    if df.empty:
-        print(f"⚠️ Skip: {sheet_name} is empty")
-        return
+    try:
+        worksheet = gc.open_by_key(GOOGLE_SHEET_ID).worksheet(sheet_name)
+        
+        if df.empty:
+            print(f"⚠️ Skip: {sheet_name} is empty")
+            return
 
-    # Clear range A:R
-    worksheet.batch_clear(["A:R"])
+        # Clear range A:R (assuming up to 18 columns)
+        worksheet.batch_clear(["A:R"])
 
-    # Paste the dataframe starting from A1
-    set_with_dataframe(worksheet, df, include_index=False, include_column_header=True, resize=True)
+        # Paste the dataframe starting from A1
+        set_with_dataframe(worksheet, df, include_index=False, include_column_header=True, resize=True)
 
-    # Add timestamp to S1
-    local_time = datetime.now(pytz.timezone("Asia/Dhaka")).strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.update("S1", [[f"Last Updated: {local_time}"]])
+        # Add timestamp to S1
+        local_time = datetime.now(pytz.timezone("Asia/Dhaka")).strftime("%Y-%m-%d %H:%M:%S")
+        worksheet.update("S1", [[f"Last Updated: {local_time}"]])
 
-    print(f"✅ Data pasted to {sheet_name} and timestamp updated in S1")
+        print(f"✅ Data pasted to {sheet_name} and timestamp updated in S1")
+    except Exception as e:
+        print(f"❌ Error pasting to {sheet_name}: {e}")
+        raise
 
 
 # --------- Main ---------
@@ -205,12 +251,16 @@ if __name__ == "__main__":
     company_map = [(1, "OA_ITEM_DF_ZIP"), (3, "OA_ITEM_DF_MT")]
 
     for company_id, sheet_tab in company_map:
-        records = fetch_sale_orders(uid, company_id)
-        all_flat_records = []
-        for r in records:
-            all_flat_records.extend(flatten_sale_order(r))
+        print(f"\n{'='*50}")
+        print(f"Processing data for Company {company_id}...")
+        
+        records = fetch_sale_orders_for_company(uid, company_id)
+        flat_rows = flatten_records(records)
+        df = pd.DataFrame(flat_rows)
 
-        df = pd.DataFrame(all_flat_records)
+        if df.empty:
+            print(f"⚠️ No data for Company {company_id}")
+            continue
 
         # Automatically find numeric columns for aggregation
         numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
@@ -222,6 +272,8 @@ if __name__ == "__main__":
         agg_dict = {col: "sum" for col in numeric_cols}
 
         # Group by ALL non-numeric columns
-        df_grouped = df.groupby(group_cols, as_index=False).agg(agg_dict)
+        df_grouped = df.groupby(group_cols, as_index=False).agg(agg_dict).round(2)  # Round to 2 decimals for money/quantities
 
         paste_to_gsheet(df_grouped, sheet_tab)
+    
+    print("\n✅ All companies processed successfully!")
