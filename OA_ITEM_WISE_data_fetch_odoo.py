@@ -233,7 +233,7 @@ def paste_to_gsheet(df, sheet_name):
         worksheet.batch_clear(["A:R"])
 
         # Paste the dataframe starting from A1
-        set_with_dataframe(worksheet, df, include_index=False, include_column_header=True, resize=True)
+        set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
         # Add timestamp to S1
         local_time = datetime.now(pytz.timezone("Asia/Dhaka")).strftime("%Y-%m-%d %H:%M:%S")
