@@ -39,10 +39,10 @@ jobs:
           GOOGLE_CREDENTIALS_BASE64: ${{ secrets.GOOGLE_CREDENTIALS_BASE64 }}
         run: |
           echo "Selected script: ${{ github.event.inputs.script_choice }}"
-          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "OA_data_fetch_odoo.py" ]]; then
-            echo "Running OA_data_fetch_odoo.py..."
-            python OA_data_fetch_odoo.py
-          fi
+          # if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "OA_data_fetch_odoo.py" ]]; then
+          #   echo "Running OA_data_fetch_odoo.py..."
+          #   python OA_data_fetch_odoo.py
+          # fi
           if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "OA_ITEM_WISE_data_fetch_odoo.py" ]]; then
             echo "Running OA_ITEM_WISE_data_fetch_odoo.py..."
             python OA_ITEM_WISE_data_fetch_odoo.py
