@@ -12,6 +12,7 @@ on:
           - ALL
           - OA_data_fetch_odoo.py
           - OA_ITEM_WISE_data_fetch_odoo.py
+          - APR_Combone_Inv_data_fetch.py
   schedule:
     - cron: "0 22 * * *"  # 22:00 UTC = 4:00 AM BD time daily
 
@@ -46,4 +47,8 @@ jobs:
           if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "OA_ITEM_WISE_data_fetch_odoo.py" ]]; then
             echo "Running OA_ITEM_WISE_data_fetch_odoo.py..."
             python OA_ITEM_WISE_data_fetch_odoo.py
+          fi
+          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "APR_Combone_Inv_data_fetch.py" ]]; then
+            echo "Running APR_Combone_Inv_data_fetch.py..."
+            python APR_Combone_Inv_data_fetch.py
           fi
