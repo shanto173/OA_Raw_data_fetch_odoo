@@ -187,7 +187,7 @@ def paste_to_gsheet(df):
         print(f"⚠️ Skip: {SHEET_TAB_NAME} DataFrame is empty.")
         return
     worksheet.batch_clear(["A:V"])
-    set_with_dataframe(worksheet, df, include_index=False, include_column_header=True, resize=True)
+    set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")

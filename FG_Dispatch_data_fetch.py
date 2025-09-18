@@ -244,7 +244,7 @@ def paste_to_gsheet(df):
     logger.info("Clearing existing data in range A:R...")
     worksheet.batch_clear(["A:R"])
     logger.info("Setting dataframe to worksheet...")
-    set_with_dataframe(worksheet, df, include_index=False, include_column_header=True, resize=True)
+    set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
