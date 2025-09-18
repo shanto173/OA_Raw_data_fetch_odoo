@@ -52,3 +52,7 @@ jobs:
             echo "Running APR_Combone_Inv_data_fetch.py..."
             python APR_Combone_Inv_data_fetch.py
           fi
+            if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "FG_Dispatch_data_fetch.py" ]]; then
+            echo "Running FG_Dispatch_data_fetch.py..."
+            python FG_Dispatch_data_fetch.py
+          fi
