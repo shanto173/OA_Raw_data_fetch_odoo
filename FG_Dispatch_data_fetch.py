@@ -101,6 +101,8 @@ def fetch_invoice_dates(uid, line_ids):
         return {}
     
     domain = [["id", "in", list(line_ids)]]
+    # Assuming invoice_line_id relates to account.move.line; if it's directly to account.move, change model to "account.move" and fields to ["id", "invoice_date"]
+    # and line_to_date = {rec["id"]: get_string_value(rec.get("invoice_date")) for rec in result}
     fields = ["id", "move_id.invoice_date"]
     
     payload = {
@@ -260,11 +262,20 @@ def flatten_records(records, line_to_date):
     logger.info(f"Flattening {len(records)} records...")
     flat_rows = []
     for record in records:
-        # Extract invoice dates using the pre-fetched map
-        invoice_lines = record.get("invoice_line_id", [])
-        if not isinstance(invoice_lines, list):
-            invoice_lines = []
-        invoice_dates = {line_to_date.get(lid, "") for lid in invoice_lines}
+        # Handle both many2one and one2many for invoice_line_id
+        invoice_field = record.get("invoice_line_id", False)
+        invoice_lines = []
+        if invoice_field:
+            if isinstance(invoice_field, list):
+                if len(invoice_field) > 0:
+                    if isinstance(invoice_field[0], int):
+                        # one2many: list of ids
+                        invoice_lines = invoice_field
+                    elif len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)) and isinstance(invoice_field[1], str):
+                        # many2one: [id, display_name]
+                        if invoice_field[0]:
+                            invoice_lines = [invoice_field[0]]
+        invoice_dates = set(line_to_date.get(lid, "") for lid in invoice_lines)
         invoice_date_str = ", ".join(d for d in sorted(invoice_dates) if d)
 
         flat_rows.append({
@@ -315,46 +326,33 @@ if __name__ == "__main__":
     
     # Fetch for both companies
     companies = [1, 3]
-    all_flat_rows = []
+    all_records = []
     unique_line_ids = set()
     
     for company_id in companies:
         logger.info(f"Starting fetch for Company {company_id}...")
         records = fetch_operation_details(uid, company_id)
-        logger.info("Collecting unique invoice line IDs...")
-        for record in records:
-            invoice_lines = record.get("invoice_line_id", [])
-            if isinstance(invoice_lines, list):
-                for lid in invoice_lines:
-                    if lid:
-                        unique_line_ids.add(lid)
-        logger.info("Flattening records...")
-        # Temporarily flatten without dates; we'll add them later
-        # No, we need to fetch dates first, but since collecting all unique, fetch after loop
-        all_flat_rows.extend(flatten_records(records, {}))  # Placeholder, will update later
-    
-    # Fetch invoice dates once for all unique IDs
-    line_to_date = fetch_invoice_dates(uid, unique_line_ids)
-    
-    # Wait, but all_flat_rows already flattened without dates.
-    # Better to fetch records first, collect unique, fetch dates, then flatten.
-    
-    # Revise: collect all records first
-    all_records = []
-    for company_id in companies:
-        records = fetch_operation_details(uid, company_id)
         all_records.extend(records)
         for record in records:
-            invoice_lines = record.get("invoice_line_id", [])
-            if isinstance(invoice_lines, list):
-                for lid in invoice_lines:
-                    if lid:
-                        unique_line_ids.add(lid)
+            invoice_field = record.get("invoice_line_id", False)
+            if invoice_field and isinstance(invoice_field, list):
+                if len(invoice_field) > 0:
+                    if isinstance(invoice_field[0], int):
+                        # one2many: list of ids
+                        for lid in invoice_field:
+                            if lid:
+                                unique_line_ids.add(lid)
+                    elif len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)) and isinstance(invoice_field[1], str):
+                        # many2one: [id, display_name]
+                        if invoice_field[0]:
+                            unique_line_ids.add(invoice_field[0])
+    
+    logger.info(f"Unique line IDs collected: {len(unique_line_ids)}")
     
     # Fetch dates
     line_to_date = fetch_invoice_dates(uid, unique_line_ids)
     
-    # Now flatten all
+    # Now flatten
     all_flat_rows = flatten_records(all_records, line_to_date)
     
     logger.info(f"Combining data from all companies: {len(all_flat_rows)} total rows")
