@@ -132,16 +132,9 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
         "buyer_name": {},
         "buyer_group": {"fields": {"display_name": {}}},
         "country_id": {"fields": {"display_name": {}}},
-        # ✅ FIXED: Fetch invoice_date via move_id on the related invoice line
-        "invoice_line_id": {
-            "fields": {
-                "move_id": {
-                    "fields": {
-                        "invoice_date": {},
-                    }
-                }
-            }
-        },
+        # ✅ NEW: Fetch related invoice lines (only invoice_date)
+        "invoice_line_id": {"fields": {"move_id": {"fields": {"invoice_date": {}}}}},
+
     }
 
     # Optional: get total count
@@ -215,14 +208,13 @@ def flatten_records(records):
     logger.info(f"Flattening {len(records)} records...")
     flat_rows = []
     for record in records:
-        # ✅ FIXED: Extract invoice_date from move_id (assuming invoice_line_id is many2one)
-        # If it turns out to be one2many, adjust to loop over the list and collect unique dates
-        invoice_line = record.get("invoice_line_id", False)
-        invoice_date_str = ""
-        if invoice_line and isinstance(invoice_line, dict):
-            move = invoice_line.get("move_id", False)
-            if move and isinstance(move, dict):
-                invoice_date_str = get_string_value(move.get("invoice_date"))
+        # ✅ Extract invoice dates safely
+        invoice_lines = record.get("invoice_line_id", [])
+        invoice_dates = []
+        for inv_line in record.get("invoice_line_id", []):
+            invoice_dates.append(get_string_value(inv_line.get("invoice_date")))
+        invoice_date_str = ", ".join(invoice_dates)
+
 
         flat_rows.append({
             "Action Date": get_string_value(record.get("action_date")),
@@ -242,7 +234,7 @@ def flatten_records(records):
             "Buyer": get_string_value(record.get("buyer_name")),
             "Buyer Group": get_string_value(record.get("buyer_group")),
             "Country": get_string_value(record.get("country_id")),
-            "Invoice Date": invoice_date_str,  # ✅ FIXED COLUMN EXTRACTION
+            "Invoice Date": invoice_date_str,  # ✅ NEW COLUMN
         })
     logger.info(f"Flattened {len(flat_rows)} rows")
     return flat_rows
