@@ -114,12 +114,6 @@ def fetch_sale_orders_for_company(uid, company_id, batch_size=2000):
                 "product_uom_qty": {},
                 "price_total": {},
                 "slidercodesfg": {},
-                "invoice_line_id": {           # ✅ ADD THIS BLOCK
-                "fields": {
-                    "invoice_date": {},   # ✅ We just need this one field
-                }
-            },
-                
             }
         }
     }
@@ -204,16 +198,6 @@ def flatten_records(records):
         order_lines = record.get("order_line", [])
         for line in order_lines:
             order_id = line.get("order_id", {}) or {}
-
-            # ✅ Properly handle invoice_line_id (list of dicts)
-            invoice_lines = line.get("invoice_line_id", [])
-            invoice_dates = []
-            if isinstance(invoice_lines, list):
-                for inv in invoice_lines:
-                    if isinstance(inv, dict):
-                        invoice_dates.append(get_string_value(inv.get("invoice_date")))
-            invoice_date_str = ", ".join(d for d in invoice_dates if d)
-
             flat_rows.append({
                 "Order Reference": get_string_value(order_id.get("name")),
                 "Sales Order Ref.": get_string_value(order_id.get("order_ref")),
@@ -230,13 +214,11 @@ def flatten_records(records):
                 "Quantity": line.get("product_uom_qty", 0),
                 "Total": line.get("price_total", 0),
                 "Slider Code (SFG)": get_string_value(line.get("slidercodesfg")),
-                "Invoice Date": invoice_date_str,  # ✅ FIXED: now joins multiple dates safely
                 "LC Number": get_string_value(order_id.get("lc_number")),
                 "Payment Terms": get_string_value(order_id.get("payment_term_id")),
                 "Status": get_string_value(order_id.get("state")),
             })
     return flat_rows
-
 
 
 def paste_to_gsheet(df, sheet_name):
@@ -248,14 +230,14 @@ def paste_to_gsheet(df, sheet_name):
             return
 
         # Clear range A:R (assuming up to 18 columns)
-        worksheet.batch_clear(["A:S"])
+        worksheet.batch_clear(["A:R"])
 
         # Paste the dataframe starting from A1
         set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
         # Add timestamp to S1
         local_time = datetime.now(pytz.timezone("Asia/Dhaka")).strftime("%Y-%m-%d %H:%M:%S")
-        worksheet.update("T1", [[f"Last Updated: {local_time}"]])
+        worksheet.update("S1", [[f"Last Updated: {local_time}"]])
 
         print(f"✅ Data pasted to {sheet_name} and timestamp updated in S1")
     except Exception as e:

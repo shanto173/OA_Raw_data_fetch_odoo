@@ -15,7 +15,6 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
 # --------- Configuration ---------
 ODOO_URL = os.getenv("ODOO_URL")
 ODOO_DB = os.getenv("ODOO_DB")
@@ -36,7 +35,6 @@ gc = gspread.authorize(creds)
 session = requests.Session()
 session.headers.update({"Content-Type": "application/json"})
 
-
 # --------- Login ---------
 def odoo_login():
     logger.info("Starting Odoo login...")
@@ -52,7 +50,6 @@ def odoo_login():
     uid = resp.json()["result"]["uid"]
     logger.info(f"Login successful, UID: {uid}")
     return uid
-
 
 # --------- Compute Date Range: May 1 to Previous Month End ---------
 def get_date_range():
@@ -72,7 +69,6 @@ def get_date_range():
     end_date = f"{prev_year}-{prev_month:02d}-{last_day:02d} 23:59:59"
     logger.info(f"Date range computed: {start_date} to {end_date}")
     return start_date, end_date
-
 
 # --------- Helper to safely get string values ---------
 def get_string_value(field, subfield=None):
@@ -97,7 +93,6 @@ def get_string_value(field, subfield=None):
     elif field in (False, None):
         return ""
     return str(field)
-
 
 # --------- Fetch All Operation Details for a Specific Company ---------
 def fetch_operation_details(uid, company_id, batch_size=5000):
@@ -136,7 +131,13 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
         "partner_id": {"fields": {"display_name": {}}},
         "buyer_name": {},
         "buyer_group": {"fields": {"display_name": {}}},
-        "country_id": {"fields": {"display_name": {}}}
+        "country_id": {"fields": {"display_name": {}}},
+        # ✅ NEW: Fetch related invoice lines (only invoice_date)
+        "invoice_line_id": {
+            "fields": {
+                "invoice_date": {},
+            }
+        },
     }
 
     # Optional: get total count
@@ -205,12 +206,20 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
     logger.info(f"Finished fetching for Company {company_id}. Total records: {len(all_records)}")
     return all_records
 
-
 # --------- Flatten Records into Rows ---------
 def flatten_records(records):
     logger.info(f"Flattening {len(records)} records...")
     flat_rows = []
     for record in records:
+        # ✅ Extract invoice dates safely
+        invoice_lines = record.get("invoice_line_id", [])
+        invoice_dates = []
+        if isinstance(invoice_lines, list):
+            for inv in invoice_lines:
+                if isinstance(inv, dict):
+                    invoice_dates.append(get_string_value(inv.get("invoice_date")))
+        invoice_date_str = ", ".join(d for d in invoice_dates if d)
+
         flat_rows.append({
             "Action Date": get_string_value(record.get("action_date")),
             "Company": get_string_value(record.get("company_id")),
@@ -229,10 +238,10 @@ def flatten_records(records):
             "Buyer": get_string_value(record.get("buyer_name")),
             "Buyer Group": get_string_value(record.get("buyer_group")),
             "Country": get_string_value(record.get("country_id")),
+            "Invoice Date": invoice_date_str,  # ✅ NEW COLUMN
         })
     logger.info(f"Flattened {len(flat_rows)} rows")
     return flat_rows
-
 
 # --------- Paste to Google Sheet ---------
 def paste_to_gsheet(df):
@@ -242,16 +251,15 @@ def paste_to_gsheet(df):
         logger.warning(f"Skip: {SHEET_TAB_NAME} DataFrame is empty.")
         return
     logger.info("Clearing existing data in range A:R...")
-    worksheet.batch_clear(["A:R"])
+    worksheet.batch_clear(["A:S"])
     logger.info("Setting dataframe to worksheet...")
     set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
     logger.info("Updating timestamp in S1...")
-    worksheet.update("S1", [[f"Last Updated: {local_time}"]])
+    worksheet.update("T1", [[f"Last Updated: {local_time}"]])
     logger.info(f"Data pasted to Google Sheet ({SHEET_TAB_NAME}), timestamp: {local_time}")
-
 
 # --------- Main ---------
 if __name__ == "__main__":
