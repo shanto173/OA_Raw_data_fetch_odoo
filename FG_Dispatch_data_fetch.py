@@ -135,9 +135,9 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
         # ✅ NEW: Fetch related invoice lines (only invoice_date)
         "invoice_line_id": {
             "fields": {
-                "invoice_date": {},
+                "move_id": {"fields": {"invoice_date": {}}}
             }
-        },
+        }
     }
 
     # Optional: get total count
@@ -214,11 +214,11 @@ def flatten_records(records):
         # ✅ Extract invoice dates safely
         invoice_lines = record.get("invoice_line_id", [])
         invoice_dates = []
-        if isinstance(invoice_lines, list):
-            for inv in invoice_lines:
-                if isinstance(inv, dict):
-                    invoice_dates.append(get_string_value(inv.get("invoice_date")))
-        invoice_date_str = ", ".join(d for d in invoice_dates if d)
+        for inv in record.get("invoice_line_id", []):
+            move = inv.get("move_id")  # nested dict
+            if move:
+                invoice_dates.append(get_string_value(move.get("invoice_date")))
+        invoice_date_str = ", ".join(invoice_dates)
 
         flat_rows.append({
             "Action Date": get_string_value(record.get("action_date")),
