@@ -15,7 +15,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --------- Configuration ---------
+# --------- Configuration (expect via env) ---------
 ODOO_URL = os.getenv("ODOO_URL")
 ODOO_DB = os.getenv("ODOO_DB")
 ODOO_USERNAME = os.getenv("ODOO_USERNAME")
@@ -24,13 +24,17 @@ GOOGLE_CREDENTIALS_BASE64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1V0x5_DJn6bC1xzyMeBglzSeH-eDIWtKG4E5Cv3rwA_I")
 SHEET_TAB_NAME = os.getenv("SHEET_TAB_NAME", "FG_DSP_DF")
 
-# --------- Setup Google Credentials ---------
-creds_json = json.loads(base64.b64decode(GOOGLE_CREDENTIALS_BASE64))
-creds = Credentials.from_service_account_info(
-    creds_json,
-    scopes=["https://www.googleapis.com/auth/spreadsheets"]
-)
-gc = gspread.authorize(creds)
+# --------- Setup Google Credentials (if provided) ---------
+if GOOGLE_CREDENTIALS_BASE64:
+    creds_json = json.loads(base64.b64decode(GOOGLE_CREDENTIALS_BASE64))
+    creds = Credentials.from_service_account_info(
+        creds_json,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    gc = gspread.authorize(creds)
+else:
+    gc = None
+    logger.warning("GOOGLE_CREDENTIALS_BASE64 not set; Google Sheets functionality will be skipped.")
 
 session = requests.Session()
 session.headers.update({"Content-Type": "application/json"})
@@ -47,7 +51,11 @@ def odoo_login():
     }
     resp = session.post(url, data=json.dumps(payload))
     resp.raise_for_status()
-    uid = resp.json()["result"]["uid"]
+    resp_json = resp.json()
+    if "error" in resp_json:
+        logger.error("Login error: %s", resp_json["error"])
+        raise ValueError(resp_json["error"])
+    uid = resp_json["result"]["uid"]
     logger.info(f"Login successful, UID: {uid}")
     return uid
 
@@ -57,7 +65,7 @@ def get_date_range():
     today = datetime.now()
     current_year = today.year
     start_date = f"{current_year}-05-01 00:00:00"
-    
+
     current_month = today.month
     if current_month == 1:
         prev_year = current_year - 1
@@ -79,6 +87,7 @@ def get_string_value(field, subfield=None):
       - int (ID)
       - str
       - False/None
+      - list forms like [id, name]
     """
     if isinstance(field, dict):
         if subfield:
@@ -87,24 +96,37 @@ def get_string_value(field, subfield=None):
         if "display_name" in field:
             return str(field["display_name"] or "")
         # fallback: join all dict values as string
-        return " ".join([str(v) for v in field.values()])
+        return " ".join([str(v) for v in field.values() if v is not None])
+    elif isinstance(field, list):
+        # often like [id, name]
+        if len(field) >= 2:
+            return str(field[1] or "")
+        if len(field) == 1:
+            return str(field[0])
+        return ""
     elif isinstance(field, int):
         return str(field)
     elif field in (False, None):
         return ""
     return str(field)
 
-# --------- Fetch invoice dates for line IDs ---------
+# --------- Fetch invoice dates for line IDs (fallback) ---------
 def fetch_invoice_dates(uid, line_ids):
-    logger.info(f"Fetching invoice dates for {len(line_ids)} unique line IDs...")
+    """
+    Given a set/list of account.move.line IDs, fetch move_id.invoice_date for them.
+    Uses web_search_read with nested specification to get move_id.invoice_date.
+    Returns dict: {line_id: invoice_date_str}
+    """
+    logger.info(f"Fetching invoice dates for {len(line_ids)} unique line IDs (fallback)...")
     if not line_ids:
         return {}
 
     domain = [["id", "in", list(line_ids)]]
 
-    # ✅ Fetch move_id as a relational field with invoice_date
-    fields = {
-        "move_id": {"fields": {"invoice_date": {}}}
+    # Request nested move_id.invoice_date via specification
+    specification = {
+        "id": {},
+        "move_id": {"fields": {"invoice_date": {}}},  # nested
     }
 
     payload = {
@@ -112,46 +134,45 @@ def fetch_invoice_dates(uid, line_ids):
         "method": "call",
         "params": {
             "model": "account.move.line",
-            "method": "web_search_read",  # ✅ better than search_read for nested fields
+            "method": "web_search_read",
             "args": [],
             "kwargs": {
                 "domain": domain,
-                "specification": fields,   # ✅ not just ["id", "move_id"]
+                "specification": specification,
+                "limit": len(line_ids),
                 "context": {
                     "lang": "en_US",
                     "tz": "Asia/Dhaka",
-                    "uid": uid,
-                    "allowed_company_ids": [1, 3],
-                    "bin_size": True,
                 },
-                "limit": len(line_ids)
             },
         },
-        "id": 4,
+        "id": 9999,
     }
 
-    resp = session.post(
-        f"{ODOO_URL}/web/dataset/call_kw/account.move.line/web_search_read",
-        data=json.dumps(payload),
-    )
+    resp = session.post(f"{ODOO_URL}/web/dataset/call_kw/account.move.line/web_search_read", data=json.dumps(payload))
     resp.raise_for_status()
     data = resp.json()
     if "error" in data:
-        logger.error(f"Odoo API Error: {json.dumps(data['error'])}")
-        raise ValueError(data['error']['data']['message'])
+        logger.error(f"Odoo API Error (fetch_invoice_dates): {json.dumps(data['error'])}")
+        return {}
 
-    result = data["result"]["records"]
+    records = data.get("result", {}).get("records", [])
     line_to_date = {}
-    for rec in result:
-        move = rec.get("move_id", False)
-        if isinstance(move, dict):
-            invoice_date = move.get("invoice_date", "")
-            if invoice_date:
-                line_to_date[rec["id"]] = invoice_date
-
-    logger.info(f"Fetched {len(line_to_date)} invoice dates")
+    for rec in records:
+        lid = rec.get("id")
+        mv = rec.get("move_id", False)
+        # mv may be dict with invoice_date, or list [id, name]
+        invoice_date = ""
+        if isinstance(mv, dict):
+            invoice_date = mv.get("invoice_date", "") or ""
+        elif isinstance(mv, list):
+            # fallback: sometimes the nested field isn't resolved; there is no invoice_date here
+            invoice_date = ""
+        # If invoice_date exists, store
+        if lid and invoice_date:
+            line_to_date[lid] = invoice_date
+    logger.info(f"Fetched {len(line_to_date)} invoice dates via fallback")
     return line_to_date
-
 
 # --------- Fetch All Operation Details for a Specific Company ---------
 def fetch_operation_details(uid, company_id, batch_size=5000):
@@ -173,6 +194,7 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
         ["company_id", "=", company_id]
     ]
 
+    # --- KEY CHANGE: request invoice_line_id with nested move_id.invoice_date and parent_state ---
     specification = {
         "action_date": {},
         "company_id": {"fields": {"display_name": {}}},
@@ -191,11 +213,17 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
         "buyer_name": {},
         "buyer_group": {"fields": {"display_name": {}}},
         "country_id": {"fields": {"display_name": {}}},
-        # Fetch only IDs for invoice_line_id
-        "invoice_line_id": {},
+        # Expanded: nested fields for invoice_line_id
+        "invoice_line_id": {
+            "fields": {
+                "id": {},
+                "move_id": {"fields": {"invoice_date": {}}},  # nested invoice_date when available inline
+                "parent_state": {}
+            }
+        },
     }
 
-    # Optional: get total count
+    # Optional: get total count (uses minimal specification to get length)
     logger.info(f"Getting total count for Company {company_id}...")
     count_payload = {
         "jsonrpc": "2.0",
@@ -217,7 +245,7 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
     if "error" in count_data:
         logger.error(f"Odoo API Error (count): {json.dumps(count_data['error'])}")
         raise ValueError(count_data['error']['data']['message'])
-    total_count = count_data["result"]["length"]
+    total_count = count_data["result"].get("length", 0)
     logger.info(f"Total records to fetch for Company {company_id}: {total_count}")
 
     while True:
@@ -270,27 +298,76 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
     logger.info(f"Finished fetching for Company {company_id}. Total records: {len(all_records)}")
     return all_records
 
-# --------- Flatten Records into Rows ---------
-def flatten_records(records, line_to_date):
+# --------- Flatten Records into Rows (robust invoice date extraction) ---------
+def flatten_records(records, line_to_date_fallback):
     logger.info(f"Flattening {len(records)} records...")
     flat_rows = []
     for record in records:
-        # Handle both many2one and one2many for invoice_line_id
+        # invoice_field may be:
+        # - False
+        # - list of ints (one2many ids)
+        # - list like [id, display] (many2one)
+        # - list of dicts (when specification requested fields)
         invoice_field = record.get("invoice_line_id", False)
-        invoice_lines = []
-        if invoice_field:
-            if isinstance(invoice_field, list):
-                if len(invoice_field) > 0:
-                    if isinstance(invoice_field[0], int):
-                        # one2many: list of ids
-                        invoice_lines = invoice_field
-                    elif len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)) and isinstance(invoice_field[1], str):
-                        # many2one: [id, display_name]
-                        if invoice_field[0]:
-                            invoice_lines = [invoice_field[0]]
-        invoice_dates = set(line_to_date.get(lid, "") for lid in invoice_lines)
-        invoice_date_str = ", ".join(sorted(d for d in invoice_dates if d))
+        invoice_line_ids_for_fallback = set()
+        invoice_dates = set()
 
+        # Case A: list of dicts with nested move_id.invoice_date (preferred)
+        if isinstance(invoice_field, list) and invoice_field:
+            # check if element is dict
+            if isinstance(invoice_field[0], dict):
+                for entry in invoice_field:
+                    # try nested move_id as dict
+                    move = entry.get("move_id", False)
+                    if isinstance(move, dict):
+                        inv_date = move.get("invoice_date", "")
+                        if inv_date:
+                            invoice_dates.add(str(inv_date))
+                    elif isinstance(move, list):
+                        # sometimes nested move_id is [id, name] -> can't get invoice_date inline
+                        # use invoice line id for fallback if available
+                        lid = entry.get("id") or (entry.get("id", None))
+                        if lid:
+                            invoice_line_ids_for_fallback.add(lid)
+                    else:
+                        # fallback: if entry contains id but no move info
+                        lid = entry.get("id")
+                        if lid:
+                            invoice_line_ids_for_fallback.add(lid)
+            else:
+                # elements are not dicts. Could be ints or [id, display]
+                if isinstance(invoice_field[0], int):
+                    for lid in invoice_field:
+                        if lid:
+                            invoice_line_ids_for_fallback.add(lid)
+                elif isinstance(invoice_field[0], (list, tuple)):
+                    for el in invoice_field:
+                        if isinstance(el, (list, tuple)) and len(el) >= 1:
+                            lid = el[0]
+                            if lid:
+                                invoice_line_ids_for_fallback.add(lid)
+                else:
+                    # unknown shape - try to parse items
+                    for el in invoice_field:
+                        try:
+                            lid = int(el)
+                            invoice_line_ids_for_fallback.add(lid)
+                        except Exception:
+                            pass
+
+        # Case B: many2one style like [id, display] (not list-of-lists)
+        elif isinstance(invoice_field, list) and len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)):
+            lid = invoice_field[0]
+            if lid:
+                invoice_line_ids_for_fallback.add(lid)
+
+        # Now attempt to resolve any fallback line ids using provided mapping
+        for lid in invoice_line_ids_for_fallback:
+            d = line_to_date_fallback.get(lid)
+            if d:
+                invoice_dates.add(d)
+
+        invoice_date_str = ", ".join(sorted(invoice_dates))
 
         flat_rows.append({
             "Action Date": get_string_value(record.get("action_date")),
@@ -317,6 +394,9 @@ def flatten_records(records, line_to_date):
 
 # --------- Paste to Google Sheet ---------
 def paste_to_gsheet(df):
+    if not gc:
+        logger.warning("Google client not initialized; skipping paste to Google Sheet.")
+        return
     logger.info(f"Pasting {len(df)} rows to Google Sheet '{SHEET_TAB_NAME}'...")
     worksheet = gc.open_by_key(GOOGLE_SHEET_ID).worksheet(SHEET_TAB_NAME)
     if df.empty:
@@ -329,7 +409,7 @@ def paste_to_gsheet(df):
 
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
-    logger.info("Updating timestamp in S1...")
+    logger.info("Updating timestamp in T1...")
     worksheet.update("T1", [[f"Last Updated: {local_time}"]])
     logger.info(f"Data pasted to Google Sheet ({SHEET_TAB_NAME}), timestamp: {local_time}")
 
@@ -337,52 +417,72 @@ def paste_to_gsheet(df):
 if __name__ == "__main__":
     logger.info("Starting main script...")
     uid = odoo_login()
-    
+
     # Fetch for both companies
     companies = [1, 3]
     all_records = []
-    unique_line_ids = set()
-    
+    unique_line_ids_for_fallback = set()
+
     for company_id in companies:
         logger.info(f"Starting fetch for Company {company_id}...")
         records = fetch_operation_details(uid, company_id)
         all_records.extend(records)
+
+        # collect fallback invoice line ids for lines that didn't include nested move data
         for record in records:
             invoice_field = record.get("invoice_line_id", False)
             if invoice_field and isinstance(invoice_field, list):
-                if len(invoice_field) > 0:
+                # if items are dicts but without move_id.invoice_date, collect their ids
+                if isinstance(invoice_field[0], dict):
+                    for entry in invoice_field:
+                        # if nested move_id doesn't include invoice_date, add id to fallback set
+                        move = entry.get("move_id", False)
+                        has_date = False
+                        if isinstance(move, dict) and move.get("invoice_date"):
+                            has_date = True
+                        if not has_date:
+                            lid = entry.get("id")
+                            if lid:
+                                unique_line_ids_for_fallback.add(lid)
+                else:
+                    # items might be ints or [id, display]
                     if isinstance(invoice_field[0], int):
-                        # one2many: list of ids
                         for lid in invoice_field:
                             if lid:
-                                unique_line_ids.add(lid)
-                    elif len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)) and isinstance(invoice_field[1], str):
-                        # many2one: [id, display_name]
-                        if invoice_field[0]:
-                            unique_line_ids.add(invoice_field[0])
-    
-    logger.info(f"Unique line IDs collected: {len(unique_line_ids)}")
-    
-    # Fetch dates
-    line_to_date = fetch_invoice_dates(uid, unique_line_ids)
-    
-    # Now flatten
+                                unique_line_ids_for_fallback.add(lid)
+                    elif isinstance(invoice_field[0], (list, tuple)):
+                        for el in invoice_field:
+                            if isinstance(el, (list, tuple)) and len(el) >= 1:
+                                lid = el[0]
+                                if lid:
+                                    unique_line_ids_for_fallback.add(lid)
+                    elif len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)):
+                        lid = invoice_field[0]
+                        if lid:
+                            unique_line_ids_for_fallback.add(lid)
+
+    logger.info(f"Unique invoice line IDs to fallback-fetch: {len(unique_line_ids_for_fallback)}")
+
+    # Fetch dates for the fallback IDs (only those that did not have inline move.invoice_date)
+    line_to_date = fetch_invoice_dates(uid, unique_line_ids_for_fallback)
+
+    # Now flatten (this will combine inline dates + fallback-mapped dates)
     all_flat_rows = flatten_records(all_records, line_to_date)
-    
+
     logger.info(f"Combining data from all companies: {len(all_flat_rows)} total rows")
     df = pd.DataFrame(all_flat_rows)
-    
+
     # Create Value column: Final Price * Qty
     logger.info("Creating Value column (Final Price * Qty)...")
     df['Value'] = df['Final Price'] * df['Qty']
-    
+
     # Convert date columns to date only (discard time)
     logger.info("Converting date columns to date only...")
     date_cols = ['Action Date', 'Order Date']
     for col in date_cols:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce').dt.date.astype(str)
-    
+
     # Group by all columns except aggregation columns
     logger.info("Performing groupby aggregation...")
     agg_columns = ['FG Balance', 'Qty', 'Final Price', 'Value']
@@ -393,16 +493,16 @@ if __name__ == "__main__":
         'Final Price': 'mean',
         'Value': 'sum'
     }
-    
+
     df_grouped = df.groupby(group_columns).agg(agg_dict).reset_index()
     logger.info(f"Grouped data: {len(df_grouped)} rows, {len(df_grouped.columns)} columns")
-    
+
     # Save to Excel (optional, for local runs)
     logger.info("Saving to Excel file...")
     df_grouped.to_excel("operation_details_grouped.xlsx", index=False)
     logger.info(f"Excel saved with {len(df_grouped)} rows and {len(df_grouped.columns)} columns.")
-    
-    # Paste to Google Sheet
+
+    # Paste to Google Sheet (if configured)
     paste_to_gsheet(df_grouped)
-    
+
     logger.info("Script completed successfully.")
