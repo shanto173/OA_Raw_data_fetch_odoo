@@ -64,17 +64,13 @@ def get_date_range():
     logger.info("Computing date range...")
     today = datetime.now()
     current_year = today.year
+    
+    # Keep start date as May 1st of current year
     start_date = f"{current_year}-05-01 00:00:00"
-
-    current_month = today.month
-    if current_month == 1:
-        prev_year = current_year - 1
-        prev_month = 12
-    else:
-        prev_year = current_year
-        prev_month = current_month - 1
-    _, last_day = calendar.monthrange(prev_year, prev_month)
-    end_date = f"{prev_year}-{prev_month:02d}-{last_day:02d} 23:59:59"
+    
+    # Use today as end date (including current time)
+    end_date = today.strftime("%Y-%m-%d %H:%M:%S")
+    
     logger.info(f"Date range computed: {start_date} to {end_date}")
     return start_date, end_date
 
