@@ -110,23 +110,23 @@ def get_string_value(field, subfield=None):
         return ""
     return str(field)
 
-# --------- Fetch invoice dates for line IDs (fallback) ---------
-def fetch_invoice_dates(uid, line_ids):
+# --------- Fetch invoice dates and statuses for line IDs (fallback) ---------
+def fetch_invoice_data(uid, line_ids):
     """
-    Given a set/list of account.move.line IDs, fetch move_id.invoice_date for them.
-    Uses web_search_read with nested specification to get move_id.invoice_date.
-    Returns dict: {line_id: invoice_date_str}
+    Given a set/list of account.move.line IDs, fetch move_id.invoice_date and move_id.state for them.
+    Uses web_search_read with nested specification to get move_id.invoice_date and move_id.state.
+    Returns dict: {line_id: {"date": invoice_date_str, "status": state_str}}
     """
-    logger.info(f"Fetching invoice dates for {len(line_ids)} unique line IDs (fallback)...")
+    logger.info(f"Fetching invoice data for {len(line_ids)} unique line IDs (fallback)...")
     if not line_ids:
         return {}
 
     domain = [["id", "in", list(line_ids)]]
 
-    # Request nested move_id.invoice_date via specification
+    # Request nested move_id.invoice_date and state via specification
     specification = {
         "id": {},
-        "move_id": {"fields": {"invoice_date": {}}},  # nested
+        "move_id": {"fields": {"invoice_date": {}, "state": {}}},  # nested
     }
 
     payload = {
@@ -153,26 +153,29 @@ def fetch_invoice_dates(uid, line_ids):
     resp.raise_for_status()
     data = resp.json()
     if "error" in data:
-        logger.error(f"Odoo API Error (fetch_invoice_dates): {json.dumps(data['error'])}")
+        logger.error(f"Odoo API Error (fetch_invoice_data): {json.dumps(data['error'])}")
         return {}
 
     records = data.get("result", {}).get("records", [])
-    line_to_date = {}
+    line_to_data = {}
     for rec in records:
         lid = rec.get("id")
         mv = rec.get("move_id", False)
-        # mv may be dict with invoice_date, or list [id, name]
+        # mv may be dict with invoice_date and state, or list [id, name]
         invoice_date = ""
+        invoice_status = ""
         if isinstance(mv, dict):
             invoice_date = mv.get("invoice_date", "") or ""
+            invoice_status = mv.get("state", "") or ""
         elif isinstance(mv, list):
-            # fallback: sometimes the nested field isn't resolved; there is no invoice_date here
+            # fallback: sometimes the nested field isn't resolved
             invoice_date = ""
-        # If invoice_date exists, store
-        if lid and invoice_date:
-            line_to_date[lid] = invoice_date
-    logger.info(f"Fetched {len(line_to_date)} invoice dates via fallback")
-    return line_to_date
+            invoice_status = ""
+        # If data exists, store
+        if lid and (invoice_date or invoice_status):
+            line_to_data[lid] = {"date": invoice_date, "status": invoice_status}
+    logger.info(f"Fetched {len(line_to_data)} invoice data entries via fallback")
+    return line_to_data
 
 # --------- Fetch All Operation Details for a Specific Company ---------
 def fetch_operation_details(uid, company_id, batch_size=5000):
@@ -194,7 +197,7 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
         ["company_id", "=", company_id]
     ]
 
-    # --- KEY CHANGE: request invoice_line_id with nested move_id.invoice_date and parent_state ---
+    # --- KEY CHANGE: request invoice_line_id with nested move_id.invoice_date and move_id.state ---
     specification = {
         "action_date": {},
         "company_id": {"fields": {"display_name": {}}},
@@ -213,13 +216,17 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
         "buyer_name": {},
         "buyer_group": {"fields": {"display_name": {}}},
         "country_id": {"fields": {"display_name": {}}},
-        # Expanded: nested fields for invoice_line_id
+        # Expanded: nested fields for invoice_line_id -> move_id
         "invoice_line_id": {
-        "fields": {
-            "id": {},  # keep id for fallback mapping if needed
-            "invoice_date": {},   # ✅ directly from combine.invoice.line
-            "parent_state": {},   # ✅ invoice status from combine.invoice.line
-             }
+            "fields": {
+                "id": {},  # keep id for fallback mapping if needed
+                "move_id": {
+                    "fields": {
+                        "invoice_date": {},   # ✅ nested to fetch reliably
+                        "state": {},          # ✅ nested to fetch reliably (maps to parent_state)
+                    }
+                },
+            }
         },
     }
 
@@ -298,8 +305,8 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
     logger.info(f"Finished fetching for Company {company_id}. Total records: {len(all_records)}")
     return all_records
 
-# --------- Flatten Records into Rows (robust invoice date extraction) ---------
-def flatten_records(records, line_to_date_fallback):
+# --------- Flatten Records into Rows (robust invoice date and status extraction) ---------
+def flatten_records(records, line_to_data_fallback):
     logger.info(f"Flattening {len(records)} records...")
     flat_rows = []
     for record in records:
@@ -312,19 +319,21 @@ def flatten_records(records, line_to_date_fallback):
         if isinstance(invoice_field, list) and invoice_field:
             if isinstance(invoice_field[0], dict):
                 for entry in invoice_field:
-                    # ✅ Read invoice_date directly
-                    inv_date = entry.get("invoice_date", "")
+                    # ✅ Read invoice_date and state from nested move_id
+                    move = entry.get("move_id", False)
+                    inv_date = ""
+                    inv_status = ""
+                    if isinstance(move, dict):
+                        inv_date = move.get("invoice_date", "")
+                        inv_status = move.get("state", "")
                     if inv_date:
                         invoice_dates.add(str(inv_date))
-
-                    # ✅ Read invoice status directly
-                    inv_status = entry.get("parent_state", "")
                     if inv_status:
                         invoice_statuses.add(str(inv_status))
 
-                    # If invoice_date missing but ID present, add to fallback
+                    # If missing but ID present, add to fallback
                     lid = entry.get("id")
-                    if lid and not inv_date:
+                    if lid and (not inv_date or not inv_status):
                         invoice_line_ids_for_fallback.add(lid)
 
             else:
@@ -348,11 +357,15 @@ def flatten_records(records, line_to_date_fallback):
         elif isinstance(invoice_field, list) and len(invoice_field) == 2 and isinstance(invoice_field[0], int):
             invoice_line_ids_for_fallback.add(invoice_field[0])
 
-        # Resolve fallback invoice dates from mapping
+        # Resolve fallback invoice data from mapping
         for lid in invoice_line_ids_for_fallback:
-            d = line_to_date_fallback.get(lid)
+            data = line_to_data_fallback.get(lid, {})
+            d = data.get("date", "")
+            s = data.get("status", "")
             if d:
                 invoice_dates.add(d)
+            if s:
+                invoice_statuses.add(s)
 
         flat_rows.append({
             "Action Date": get_string_value(record.get("action_date")),
@@ -418,15 +431,19 @@ if __name__ == "__main__":
         for record in records:
             invoice_field = record.get("invoice_line_id", False)
             if invoice_field and isinstance(invoice_field, list):
-                # if items are dicts but without move_id.invoice_date, collect their ids
+                # if items are dicts but without move_id.invoice_date or state, collect their ids
                 if isinstance(invoice_field[0], dict):
                     for entry in invoice_field:
-                        # if nested move_id doesn't include invoice_date, add id to fallback set
+                        # if nested move_id doesn't include invoice_date or state, add id to fallback set
                         move = entry.get("move_id", False)
                         has_date = False
-                        if isinstance(move, dict) and move.get("invoice_date"):
-                            has_date = True
-                        if not has_date:
+                        has_status = False
+                        if isinstance(move, dict):
+                            if move.get("invoice_date"):
+                                has_date = True
+                            if move.get("state"):
+                                has_status = True
+                        if not has_date or not has_status:
                             lid = entry.get("id")
                             if lid:
                                 unique_line_ids_for_fallback.add(lid)
@@ -449,11 +466,11 @@ if __name__ == "__main__":
 
     logger.info(f"Unique invoice line IDs to fallback-fetch: {len(unique_line_ids_for_fallback)}")
 
-    # Fetch dates for the fallback IDs (only those that did not have inline move.invoice_date)
-    line_to_date = fetch_invoice_dates(uid, unique_line_ids_for_fallback)
+    # Fetch data for the fallback IDs (only those that did not have inline move.invoice_date or state)
+    line_to_data = fetch_invoice_data(uid, unique_line_ids_for_fallback)
 
-    # Now flatten (this will combine inline dates + fallback-mapped dates)
-    all_flat_rows = flatten_records(all_records, line_to_date)
+    # Now flatten (this will combine inline data + fallback-mapped data)
+    all_flat_rows = flatten_records(all_records, line_to_data)
 
     logger.info(f"Combining data from all companies: {len(all_flat_rows)} total rows")
     df = pd.DataFrame(all_flat_rows)
