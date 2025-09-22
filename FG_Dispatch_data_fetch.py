@@ -215,11 +215,11 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
         "country_id": {"fields": {"display_name": {}}},
         # Expanded: nested fields for invoice_line_id
         "invoice_line_id": {
-            "fields": {
-                "id": {},
-                "move_id": {"fields": {"invoice_date": {}}},  # nested invoice_date when available inline
-                "parent_state": {}
-            }
+        "fields": {
+            "id": {},  # keep id for fallback mapping if needed
+            "invoice_date": {},   # ✅ directly from combine.invoice.line
+            "parent_state": {},   # ✅ invoice status from combine.invoice.line
+             }
         },
     }
 
@@ -303,71 +303,56 @@ def flatten_records(records, line_to_date_fallback):
     logger.info(f"Flattening {len(records)} records...")
     flat_rows = []
     for record in records:
-        # invoice_field may be:
-        # - False
-        # - list of ints (one2many ids)
-        # - list like [id, display] (many2one)
-        # - list of dicts (when specification requested fields)
         invoice_field = record.get("invoice_line_id", False)
         invoice_line_ids_for_fallback = set()
         invoice_dates = set()
+        invoice_statuses = set()
 
-        # Case A: list of dicts with nested move_id.invoice_date (preferred)
+        # Case A: list of dicts (specification requested fields)
         if isinstance(invoice_field, list) and invoice_field:
-            # check if element is dict
             if isinstance(invoice_field[0], dict):
                 for entry in invoice_field:
-                    # try nested move_id as dict
-                    move = entry.get("move_id", False)
-                    if isinstance(move, dict):
-                        inv_date = move.get("invoice_date", "")
-                        if inv_date:
-                            invoice_dates.add(str(inv_date))
-                    elif isinstance(move, list):
-                        # sometimes nested move_id is [id, name] -> can't get invoice_date inline
-                        # use invoice line id for fallback if available
-                        lid = entry.get("id") or (entry.get("id", None))
-                        if lid:
-                            invoice_line_ids_for_fallback.add(lid)
-                    else:
-                        # fallback: if entry contains id but no move info
-                        lid = entry.get("id")
-                        if lid:
-                            invoice_line_ids_for_fallback.add(lid)
+                    # ✅ Read invoice_date directly
+                    inv_date = entry.get("invoice_date", "")
+                    if inv_date:
+                        invoice_dates.add(str(inv_date))
+
+                    # ✅ Read invoice status directly
+                    inv_status = entry.get("parent_state", "")
+                    if inv_status:
+                        invoice_statuses.add(str(inv_status))
+
+                    # If invoice_date missing but ID present, add to fallback
+                    lid = entry.get("id")
+                    if lid and not inv_date:
+                        invoice_line_ids_for_fallback.add(lid)
+
             else:
-                # elements are not dicts. Could be ints or [id, display]
+                # Fallback: list of ints or [id, display]
                 if isinstance(invoice_field[0], int):
                     for lid in invoice_field:
-                        if lid:
-                            invoice_line_ids_for_fallback.add(lid)
+                        invoice_line_ids_for_fallback.add(lid)
                 elif isinstance(invoice_field[0], (list, tuple)):
                     for el in invoice_field:
-                        if isinstance(el, (list, tuple)) and len(el) >= 1:
-                            lid = el[0]
-                            if lid:
-                                invoice_line_ids_for_fallback.add(lid)
+                        if len(el) >= 1 and isinstance(el[0], int):
+                            invoice_line_ids_for_fallback.add(el[0])
                 else:
-                    # unknown shape - try to parse items
+                    # Unknown shape, try parse
                     for el in invoice_field:
                         try:
-                            lid = int(el)
-                            invoice_line_ids_for_fallback.add(lid)
+                            invoice_line_ids_for_fallback.add(int(el))
                         except Exception:
                             pass
 
-        # Case B: many2one style like [id, display] (not list-of-lists)
-        elif isinstance(invoice_field, list) and len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)):
-            lid = invoice_field[0]
-            if lid:
-                invoice_line_ids_for_fallback.add(lid)
+        # Case B: many2one style like [id, display]
+        elif isinstance(invoice_field, list) and len(invoice_field) == 2 and isinstance(invoice_field[0], int):
+            invoice_line_ids_for_fallback.add(invoice_field[0])
 
-        # Now attempt to resolve any fallback line ids using provided mapping
+        # Resolve fallback invoice dates from mapping
         for lid in invoice_line_ids_for_fallback:
             d = line_to_date_fallback.get(lid)
             if d:
                 invoice_dates.add(d)
-
-        invoice_date_str = ", ".join(sorted(invoice_dates))
 
         flat_rows.append({
             "Action Date": get_string_value(record.get("action_date")),
@@ -387,7 +372,8 @@ def flatten_records(records, line_to_date_fallback):
             "Buyer": get_string_value(record.get("buyer_name")),
             "Buyer Group": get_string_value(record.get("buyer_group")),
             "Country": get_string_value(record.get("country_id")),
-            "Invoice Date": invoice_date_str,
+            "Invoice Date": ", ".join(sorted(invoice_dates)),
+            "Invoice Status": ", ".join(sorted(invoice_statuses)),
         })
     logger.info(f"Flattened {len(flat_rows)} rows")
     return flat_rows
