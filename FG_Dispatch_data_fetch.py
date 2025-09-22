@@ -303,43 +303,57 @@ def flatten_records(records, line_to_data_fallback):
         invoice_dates = set()
         invoice_statuses = set()
 
-        # Case A: list of dicts (specification requested fields)
-        if isinstance(invoice_field, list) and invoice_field:
-            if isinstance(invoice_field[0], dict):
-                for entry in invoice_field:
-                    # ✅ Read invoice_date and parent_state directly
-                    inv_date = entry.get("invoice_date", "")
-                    inv_status = entry.get("parent_state", "")
-                    if inv_date:
-                        invoice_dates.add(str(inv_date))
-                    if inv_status:
-                        invoice_statuses.add(str(inv_status))
+        if not invoice_field:
+            pass
+        elif isinstance(invoice_field, dict):
+            # Case: many2one with fields
+            inv_date = invoice_field.get("invoice_date", "")
+            inv_status = invoice_field.get("parent_state", "")
+            if inv_date:
+                invoice_dates.add(str(inv_date))
+            if inv_status:
+                invoice_statuses.add(str(inv_status))
 
-                    # If missing but ID present, add to fallback
-                    lid = entry.get("id")
-                    if lid and (not inv_date or not inv_status):
-                        invoice_line_ids_for_fallback.add(lid)
+            lid = invoice_field.get("id")
+            if lid and (not inv_date or not inv_status):
+                invoice_line_ids_for_fallback.add(lid)
+        elif isinstance(invoice_field, list):
+            if invoice_field:
+                if isinstance(invoice_field[0], dict):
+                    # Case A: list of dicts for x2many
+                    for entry in invoice_field:
+                        inv_date = entry.get("invoice_date", "")
+                        inv_status = entry.get("parent_state", "")
+                        if inv_date:
+                            invoice_dates.add(str(inv_date))
+                        if inv_status:
+                            invoice_statuses.add(str(inv_status))
 
-            else:
-                # Fallback: list of ints or [id, display]
-                if isinstance(invoice_field[0], int):
-                    for lid in invoice_field:
-                        invoice_line_ids_for_fallback.add(lid)
-                elif isinstance(invoice_field[0], (list, tuple)):
-                    for el in invoice_field:
-                        if len(el) >= 1 and isinstance(el[0], int):
-                            invoice_line_ids_for_fallback.add(el[0])
+                        lid = entry.get("id")
+                        if lid and (not inv_date or not inv_status):
+                            invoice_line_ids_for_fallback.add(lid)
                 else:
-                    # Unknown shape, try parse
-                    for el in invoice_field:
-                        try:
-                            invoice_line_ids_for_fallback.add(int(el))
-                        except Exception:
-                            pass
-
-        # Case B: many2one style like [id, display]
-        elif isinstance(invoice_field, list) and len(invoice_field) == 2 and isinstance(invoice_field[0], int):
-            invoice_line_ids_for_fallback.add(invoice_field[0])
+                    # Fallback: list of ints or [id, display]
+                    if isinstance(invoice_field[0], int):
+                        for lid in invoice_field:
+                            invoice_line_ids_for_fallback.add(lid)
+                    elif isinstance(invoice_field[0], (list, tuple)):
+                        for el in invoice_field:
+                            if len(el) >= 1 and isinstance(el[0], int):
+                                invoice_line_ids_for_fallback.add(el[0])
+                    else:
+                        # Unknown shape, try parse
+                        for el in invoice_field:
+                            try:
+                                invoice_line_ids_for_fallback.add(int(el))
+                            except Exception:
+                                pass
+            # Case B: many2one without fields like [id, display]
+            elif len(invoice_field) == 2 and isinstance(invoice_field[0], int):
+                invoice_line_ids_for_fallback.add(invoice_field[0])
+        elif isinstance(invoice_field, int):
+            # Unlikely, but direct id
+            invoice_line_ids_for_fallback.add(invoice_field)
 
         # Resolve fallback invoice data from mapping
         for lid in invoice_line_ids_for_fallback:
@@ -414,33 +428,41 @@ if __name__ == "__main__":
         # collect fallback invoice line ids for lines that didn't include nested data
         for record in records:
             invoice_field = record.get("invoice_line_id", False)
-            if invoice_field and isinstance(invoice_field, list):
-                # if items are dicts but without invoice_date or parent_state, collect their ids
-                if isinstance(invoice_field[0], dict):
-                    for entry in invoice_field:
-                        # if doesn't include invoice_date or parent_state, add id to fallback set
-                        has_date = bool(entry.get("invoice_date"))
-                        has_status = bool(entry.get("parent_state"))
-                        if not has_date or not has_status:
-                            lid = entry.get("id")
-                            if lid:
-                                unique_line_ids_for_fallback.add(lid)
-                else:
-                    # items might be ints or [id, display]
-                    if isinstance(invoice_field[0], int):
-                        for lid in invoice_field:
-                            if lid:
-                                unique_line_ids_for_fallback.add(lid)
-                    elif isinstance(invoice_field[0], (list, tuple)):
-                        for el in invoice_field:
-                            if isinstance(el, (list, tuple)) and len(el) >= 1:
-                                lid = el[0]
+            if not invoice_field:
+                continue
+            if isinstance(invoice_field, dict):
+                # many2one case
+                has_date = bool(invoice_field.get("invoice_date"))
+                has_status = bool(invoice_field.get("parent_state"))
+                if not has_date or not has_status:
+                    lid = invoice_field.get("id")
+                    if lid:
+                        unique_line_ids_for_fallback.add(lid)
+            elif isinstance(invoice_field, list):
+                if invoice_field:
+                    if isinstance(invoice_field[0], dict):
+                        for entry in invoice_field:
+                            has_date = bool(entry.get("invoice_date"))
+                            has_status = bool(entry.get("parent_state"))
+                            if not has_date or not has_status:
+                                lid = entry.get("id")
                                 if lid:
                                     unique_line_ids_for_fallback.add(lid)
-                    elif len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)):
-                        lid = invoice_field[0]
-                        if lid:
-                            unique_line_ids_for_fallback.add(lid)
+                    else:
+                        if isinstance(invoice_field[0], int):
+                            for lid in invoice_field:
+                                if lid:
+                                    unique_line_ids_for_fallback.add(lid)
+                        elif isinstance(invoice_field[0], (list, tuple)):
+                            for el in invoice_field:
+                                if isinstance(el, (list, tuple)) and len(el) >= 1:
+                                    lid = el[0]
+                                    if lid:
+                                        unique_line_ids_for_fallback.add(lid)
+                if len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)):
+                    lid = invoice_field[0]
+                    if lid:
+                        unique_line_ids_for_fallback.add(lid)
 
     logger.info(f"Unique invoice line IDs to fallback-fetch: {len(unique_line_ids_for_fallback)}")
 
