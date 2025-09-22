@@ -51,40 +51,6 @@ def odoo_login():
     logger.info(f"Login successful, UID: {uid}")
     return uid
 
-# --------- Get Field Info ---------
-def get_field_info(uid):
-    logger.info("Fetching field info for invoice_line_id...")
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "operation.details",
-            "method": "fields_get",
-            "args": [["invoice_line_id"]],
-            "kwargs": {
-                "attributes": ["string", "type", "relation", "relation_field", "help"],
-                "context": {
-                    "lang": "en_US",
-                    "tz": "Asia/Dhaka",
-                    "uid": uid,
-                },
-            },
-        },
-        "id": 5,
-    }
-    resp = session.post(
-        f"{ODOO_URL}/web/dataset/call_kw/operation.details/fields_get",
-        data=json.dumps(payload),
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if "error" in data:
-        logger.error(f"Odoo API Error: {json.dumps(data['error'])}")
-        raise ValueValue(data['error']['data']['message'])
-    result = data["result"]
-    logger.info(f"Field info: {json.dumps(result)}")
-    return result
-
 # --------- Compute Date Range: May 1 to Previous Month End ---------
 def get_date_range():
     logger.info("Computing date range...")
@@ -128,6 +94,65 @@ def get_string_value(field, subfield=None):
         return ""
     return str(field)
 
+# --------- Fetch invoice dates for line IDs ---------
+def fetch_invoice_dates(uid, line_ids):
+    logger.info(f"Fetching invoice dates for {len(line_ids)} unique line IDs...")
+    if not line_ids:
+        return {}
+
+    domain = [["id", "in", list(line_ids)]]
+
+    # ✅ Fetch move_id as a relational field with invoice_date
+    fields = {
+        "move_id": {"fields": {"invoice_date": {}}}
+    }
+
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": "account.move.line",
+            "method": "web_search_read",  # ✅ better than search_read for nested fields
+            "args": [],
+            "kwargs": {
+                "domain": domain,
+                "specification": fields,   # ✅ not just ["id", "move_id"]
+                "context": {
+                    "lang": "en_US",
+                    "tz": "Asia/Dhaka",
+                    "uid": uid,
+                    "allowed_company_ids": [1, 3],
+                    "bin_size": True,
+                },
+                "limit": len(line_ids)
+            },
+        },
+        "id": 4,
+    }
+
+    resp = session.post(
+        f"{ODOO_URL}/web/dataset/call_kw/account.move.line/web_search_read",
+        data=json.dumps(payload),
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        logger.error(f"Odoo API Error: {json.dumps(data['error'])}")
+        raise ValueError(data['error']['data']['message'])
+
+    result = data["result"]["records"]
+    line_to_date = {}
+    for rec in result:
+        move = rec.get("move_id", False)
+        if isinstance(move, dict):
+            invoice_date = move.get("invoice_date", "")
+            if invoice_date:
+                line_to_date[rec["id"]] = invoice_date
+
+    logger.info(f"Fetched {len(line_to_date)} invoice dates")
+    return line_to_date
+
+
 # --------- Fetch All Operation Details for a Specific Company ---------
 def fetch_operation_details(uid, company_id, batch_size=5000):
     logger.info(f"Starting fetch for Company {company_id}...")
@@ -166,15 +191,8 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
         "buyer_name": {},
         "buyer_group": {"fields": {"display_name": {}}},
         "country_id": {"fields": {"display_name": {}}},
-        "invoice_line_id": {
-            "fields": {
-                "move_id": {
-                    "fields": {
-                        "invoice_date": {}
-                    }
-                }
-            }
-        },
+        # Fetch only IDs for invoice_line_id
+        "invoice_line_id": {},
     }
 
     # Optional: get total count
@@ -249,37 +267,30 @@ def fetch_operation_details(uid, company_id, batch_size=5000):
             break
         offset += batch_size
 
-    # Log if any invoice_line_id is populated
-    populated = [r for r in all_records if r.get("invoice_line_id")]
-    logger.info(f"Records with invoice_line_id populated: {len(populated)} / {len(all_records)}")
-
     logger.info(f"Finished fetching for Company {company_id}. Total records: {len(all_records)}")
     return all_records
 
 # --------- Flatten Records into Rows ---------
-def flatten_records(records):
+def flatten_records(records, line_to_date):
     logger.info(f"Flattening {len(records)} records...")
     flat_rows = []
     for record in records:
-        invoice_dates = set()
+        # Handle both many2one and one2many for invoice_line_id
         invoice_field = record.get("invoice_line_id", False)
+        invoice_lines = []
         if invoice_field:
-            if isinstance(invoice_field, dict):
-                # many2one
-                move = invoice_field.get("move_id", False)
-                if move:
-                    date = get_string_value(move.get("invoice_date"))
-                    if date:
-                        invoice_dates.add(date)
-            elif isinstance(invoice_field, list):
-                # one2many
-                for line in invoice_field:
-                    move = line.get("move_id", False)
-                    if move:
-                        date = get_string_value(move.get("invoice_date"))
-                        if date:
-                            invoice_dates.add(date)
-        invoice_date_str = ", ".join(sorted(invoice_dates))
+            if isinstance(invoice_field, list):
+                if len(invoice_field) > 0:
+                    if isinstance(invoice_field[0], int):
+                        # one2many: list of ids
+                        invoice_lines = invoice_field
+                    elif len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)) and isinstance(invoice_field[1], str):
+                        # many2one: [id, display_name]
+                        if invoice_field[0]:
+                            invoice_lines = [invoice_field[0]]
+        invoice_dates = set(line_to_date.get(lid, "") for lid in invoice_lines)
+        invoice_date_str = ", ".join(sorted(d for d in invoice_dates if d))
+
 
         flat_rows.append({
             "Action Date": get_string_value(record.get("action_date")),
@@ -327,19 +338,36 @@ if __name__ == "__main__":
     logger.info("Starting main script...")
     uid = odoo_login()
     
-    # Get field info
-    field_info = get_field_info(uid)
-    
     # Fetch for both companies
     companies = [1, 3]
-    all_flat_rows = []
+    all_records = []
+    unique_line_ids = set()
     
     for company_id in companies:
         logger.info(f"Starting fetch for Company {company_id}...")
         records = fetch_operation_details(uid, company_id)
-        logger.info("Flattening records...")
-        flat_rows = flatten_records(records)
-        all_flat_rows.extend(flat_rows)
+        all_records.extend(records)
+        for record in records:
+            invoice_field = record.get("invoice_line_id", False)
+            if invoice_field and isinstance(invoice_field, list):
+                if len(invoice_field) > 0:
+                    if isinstance(invoice_field[0], int):
+                        # one2many: list of ids
+                        for lid in invoice_field:
+                            if lid:
+                                unique_line_ids.add(lid)
+                    elif len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)) and isinstance(invoice_field[1], str):
+                        # many2one: [id, display_name]
+                        if invoice_field[0]:
+                            unique_line_ids.add(invoice_field[0])
+    
+    logger.info(f"Unique line IDs collected: {len(unique_line_ids)}")
+    
+    # Fetch dates
+    line_to_date = fetch_invoice_dates(uid, unique_line_ids)
+    
+    # Now flatten
+    all_flat_rows = flatten_records(all_records, line_to_date)
     
     logger.info(f"Combining data from all companies: {len(all_flat_rows)} total rows")
     df = pd.DataFrame(all_flat_rows)
