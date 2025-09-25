@@ -15,7 +15,7 @@ on:
           - APR_Combone_Inv_data_fetch.py
           - FG_Dispatch_data_fetch.py
   schedule:
-    - cron: "0 22 * * *"  # 22:00 UTC = 4:00 AM BD time daily
+    - cron: "0 */2 * * *"  # Eveery 2 hrs daily
 
 jobs:
   fetch-oa-data:
