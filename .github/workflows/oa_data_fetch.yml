@@ -16,7 +16,7 @@ on:
           - FG_Dispatch_data_fetch.py
           - srnjnsr_req_OA.py
   schedule:
-    - cron: "0 */2 * * *"  # Eveery 2 hrs daily
+    - cron: "0 */2 * * *"  # Every 2 hrs daily
 
 jobs:
   fetch-oa-data:
@@ -42,25 +42,29 @@ jobs:
           GOOGLE_CREDENTIALS_BASE64: ${{ secrets.GOOGLE_CREDENTIALS_BASE64 }}
         run: |
           echo "Selected script: ${{ github.event.inputs.script_choice }}"
+
+          # Example: Uncomment if you want to include OA_data_fetch_odoo.py
           # if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "OA_data_fetch_odoo.py" ]]; then
           #   echo "Running OA_data_fetch_odoo.py..."
           #   python OA_data_fetch_odoo.py
           # fi
+
           if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "OA_ITEM_WISE_data_fetch_odoo.py" ]]; then
             echo "Running OA_ITEM_WISE_data_fetch_odoo.py..."
             python OA_ITEM_WISE_data_fetch_odoo.py
           fi
+
           if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "APR_Combone_Inv_data_fetch.py" ]]; then
             echo "Running APR_Combone_Inv_data_fetch.py..."
             python APR_Combone_Inv_data_fetch.py
           fi
-            if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "FG_Dispatch_data_fetch.py" ]]; then
+
+          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "FG_Dispatch_data_fetch.py" ]]; then
             echo "Running FG_Dispatch_data_fetch.py..."
             python FG_Dispatch_data_fetch.py
           fi
 
-          fi
-            if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "srnjnsr_req_OA.py" ]]; then
+          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "srnjnsr_req_OA.py" ]]; then
             echo "Running srnjnsr_req_OA.py..."
             python srnjnsr_req_OA.py
           fi
