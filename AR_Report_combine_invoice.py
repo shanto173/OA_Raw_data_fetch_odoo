@@ -255,12 +255,12 @@ def paste_to_gsheet(df: pd.DataFrame, sheet_key: str = GOOGLE_SHEET_ID, tab_name
     if df.empty:
         print(f"⚠️ Skip: {tab_name} DataFrame is empty.")
         return
-    worksheet.batch_clear(["A:V"])
+    worksheet.batch_clear(["A:AG"])
     set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.update("W1", [[f"Last Updated: {local_time}"]])
+    worksheet.update("AI1", [[f"Last Updated: {local_time}"]])
     print(f"✅ Data pasted to Google Sheet ({tab_name}), timestamp: {local_time}")
 
 # --------- Example usage helpers (adapt these to the payloads you showed) ---------
