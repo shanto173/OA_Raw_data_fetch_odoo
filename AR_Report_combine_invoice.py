@@ -8,10 +8,9 @@ import pytz
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
-from typing import Dict, Any, Optional, List
 
 # --------- Environment Variables ---------
-ODOO_URL = os.getenv("ODOO_URL")  # e.g. https://taps.odoo.com
+ODOO_URL = os.getenv("ODOO_URL")
 ODOO_DB = os.getenv("ODOO_DB")
 ODOO_USERNAME = os.getenv("ODOO_USERNAME")
 ODOO_PASSWORD = os.getenv("ODOO_PASSWORD")
@@ -19,30 +18,20 @@ GOOGLE_CREDENTIALS_BASE64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1sPVTbTppdEn7_S2hFyYGTF2pUoyOx19NM4siqbCKFCw")
 SHEET_TAB_NAME = os.getenv("SHEET_TAB_NAME", "Raw_Data")
 
-# --------- Session ---------
-session = requests.Session()
-session.headers.update({"Content-Type": "application/json"})
-
-# --------- Google creds (fixed decode) ---------
-if not GOOGLE_CREDENTIALS_BASE64:
-    raise EnvironmentError("Missing GOOGLE_CREDENTIALS_BASE64 environment variable")
-
-try:
-    creds_text = base64.b64decode(GOOGLE_CREDENTIALS_BASE64).decode("utf-8")
-    creds_json = json.loads(creds_text)
-except Exception as e:
-    raise RuntimeError(f"Failed to decode GOOGLE_CREDENTIALS_BASE64: {e}")
-
+# --------- Setup Google Credentials ---------
+creds_json = json.loads(base64.b64decode(GOOGLE_CREDENTIALS_BASE64))
 creds = Credentials.from_service_account_info(
     creds_json,
     scopes=["https://www.googleapis.com/auth/spreadsheets"]
 )
 gc = gspread.authorize(creds)
 
-# --------- Odoo login ---------
-def odoo_login() -> int:
-    if not all([ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_PASSWORD]):
-        raise EnvironmentError("One or more ODOO_* env vars missing")
+session = requests.Session()
+session.headers.update({"Content-Type": "application/json"})
+
+
+# --------- Login to Odoo ---------
+def odoo_login():
     url = f"{ODOO_URL}/web/session/authenticate"
     payload = {
         "jsonrpc": "2.0",
@@ -52,52 +41,86 @@ def odoo_login() -> int:
     }
     resp = session.post(url, data=json.dumps(payload))
     resp.raise_for_status()
-    result = resp.json().get("result")
-    if not result or "uid" not in result:
-        raise RuntimeError(f"Odoo login failed: {resp.text}")
-    uid = result["uid"]
-    print(f"✅ Logged in to Odoo, uid: {uid}")
+    uid = resp.json()["result"]["uid"]
+    print(f"✅ Logged in! UID: {uid}")
     return uid
 
-# --------- Generic Odoo RPC caller for web_search_read-like ops ---------
-def call_odoo_rpc(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    url = f"{ODOO_URL}{path}"
-    resp = session.post(url, data=json.dumps(payload))
-    resp.raise_for_status()
-    j = resp.json()
-    if "error" in j:
-        raise RuntimeError(f"Odoo RPC error: {j['error']}")
-    return j
 
-def odoo_web_search_read(model: str,
-                         specification: Dict[str, Any],
-                         domain: Optional[List[Any]] = None,
-                         uid: Optional[int] = None,
-                         offset: int = 0,
-                         limit: int = 2000,
-                         order: str = "") -> List[Dict[str, Any]]:
-    """
-    Generic paginated web_search_read (works like the one you observed).
-    Returns list of records.
-    """
+# --------- Helper for safely extracting string values ---------
+def get_string_value(field, subfield=None):
+    if isinstance(field, dict):
+        if subfield:
+            value = field.get(subfield)
+            return get_string_value(value)
+        if "display_name" in field:
+            return str(field["display_name"] or "")
+        return " ".join([str(v) for v in field.values()])
+    elif isinstance(field, int):
+        return str(field)
+    elif field in (False, None):
+        return ""
+    return str(field)
+
+
+# --------- Fetch Combine Invoice ---------
+def fetch_combine_invoice(uid, batch_size=2000):
     all_records = []
-    # Ensure domain and context default
-    if domain is None:
-        domain = [["state", "=", "posted"]]
+    offset = 0
+
+    # Domain: only posted invoices
+    domain = [["state", "=", "posted"]]
+
+    # Specification: only requested fields
+    specification = {
+        "name": {},
+        "invoice_date": {},
+        "buyer_name": {"fields": {"display_name": {}}},
+        "partner_id": {"fields": {"display_name": {}}},
+        "delivery_date": {},
+        "amount_total": {},
+        "commercial_doc_revd_date": {},
+        "commercial_handover_date": {},
+        "finance_team_submitted_date": {},
+        "acceptance_date": {},
+        "docs_state": {},
+        "oa_state": {},
+        "payment_maturity_date": {},
+        "payment_recv_date": {},
+        "invoice_payment_term_id": {"fields": {"display_name": {}}},
+        "lc_no": {},
+        "lc_date": {},
+        "currency_id": {"fields": {"display_name": {}}},
+        "fg_delivery": {},
+        "fg_delivery_pending": {},
+        "fg_receiving": {},
+        "m_total": {},
+        "m_total_q": {},
+        "m_invoice": {},
+        "pi_numbers": {},
+        "production_qty": {},
+        "qty_total": {},
+        "production_pending": {},
+        "po_numbers": {},
+        "total_oa_product_qty": {},
+        "z_total": {},
+        "z_total_q": {},
+        "z_invoice": {},
+    }
 
     while True:
         payload = {
             "jsonrpc": "2.0",
             "method": "call",
             "params": {
-                "model": model,
+                "model": "combine.invoice",
                 "method": "web_search_read",
                 "args": [],
                 "kwargs": {
+                    "domain": domain,
                     "specification": specification,
                     "offset": offset,
-                    "limit": limit,
-                    "order": order,
+                    "limit": batch_size,
+                    "order": "",
                     "context": {
                         "lang": "en_US",
                         "tz": "Asia/Dhaka",
@@ -107,275 +130,83 @@ def odoo_web_search_read(model: str,
                         "current_company_id": 1,
                     },
                     "count_limit": 100000,
-                    "domain": domain,
                 },
             },
-            "id": 3,
+            "id": 2,
         }
-        j = call_odoo_rpc("/web/dataset/call_kw/{}/web_search_read".format(model.replace(".", "/")), payload)
-        result = j.get("result", {})
+
+        resp = session.post(f"{ODOO_URL}/web/dataset/call_kw/combine.invoice/web_search_read",
+                            data=json.dumps(payload))
+        resp.raise_for_status()
+        result = resp.json()["result"]
         records = result.get("records", [])
         all_records.extend(records)
-        print(f"Fetched {len(records)} records (offset {offset}); total so far: {len(all_records)}")
-        if len(records) < limit:
+        print(f"Fetched {len(records)} records, total so far: {len(all_records)}")
+        if len(records) < batch_size:
             break
-        offset += limit
-    print(f"✅ Finished fetching model {model}. Total: {len(all_records)}")
+        offset += batch_size
+
+    print(f"✅ Finished. Total fetched: {len(all_records)}")
     return all_records
 
-# --------- Other Odoo endpoints you listed (search_panel_select_range, get_fields, namelist, formats, search_read) ---------
-def odoo_search_panel_select_range(field_name: str, uid: int, search_domain=None, limit: int = 200):
-    payload = [{
-        "id": 13,
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "combine.invoice",
-            "method": "search_panel_select_range",
-            "args": [field_name],
-            "kwargs": {
-                "category_domain": [],
-                "context": {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [1, 3]},
-                "enable_counters": True,
-                "expand": False,
-                "filter_domain": [],
-                "hierarchize": True,
-                "limit": limit,
-                "search_domain": search_domain or [["state", "=", "posted"]],
-            },
-        },
-    }]
-    return call_odoo_rpc("/web/dataset/call_kw/combine.invoice/search_panel_select_range", payload)
 
-def odoo_get_fields(uid: int):
-    payload = {"jsonrpc": "2.0", "id": 17, "params": {"model": "combine.invoice", "import_compat": False}}
-    return call_odoo_rpc("/web/export/get_fields", payload)
+# --------- Flatten Records ---------
+def flatten_invoice_records(records):
+    return [{
+        "Number": get_string_value(r.get("name")),
+        "Invoice/Bill Date": get_string_value(r.get("invoice_date")),
+        "Buyer": get_string_value(r.get("buyer_name")),
+        "Partner": get_string_value(r.get("partner_id")),
+        "Delivery Date": get_string_value(r.get("delivery_date")),
+        "Total Value": r.get("amount_total", 0),
+        "Doc Received Date from C&F": get_string_value(r.get("commercial_doc_revd_date")),
+        "Commercial to Finance Handover Date": get_string_value(r.get("commercial_handover_date")),
+        "Bank Submission Date": get_string_value(r.get("finance_team_submitted_date")),
+        "Acceptance Date": get_string_value(r.get("acceptance_date")),
+        "Document State": get_string_value(r.get("docs_state")),
+        "OA State": get_string_value(r.get("oa_state")),
+        "Payment Maturity Date": get_string_value(r.get("payment_maturity_date")),
+        "Payment Received Date": get_string_value(r.get("payment_recv_date")),
+        "Payment Terms": get_string_value(r.get("invoice_payment_term_id")),
+        "LC": get_string_value(r.get("lc_no")),
+        "LC Date": get_string_value(r.get("lc_date")),
+        "Currency": get_string_value(r.get("currency_id")),
+        "FG Delivery": r.get("fg_delivery", 0),
+        "FG Delivery Pending": r.get("fg_delivery_pending", 0),
+        "FG Receiving": r.get("fg_receiving", 0),
+        "Metal Total": r.get("m_total", 0),
+        "Metal Total Qty": r.get("m_total_q", 0),
+        "Metal Trims Invoice": get_string_value(r.get("m_invoice")),
+        "PI No.": get_string_value(r.get("pi_numbers")),
+        "Production Qty": r.get("production_qty", 0),
+        "Qty Total": r.get("qty_total", 0),
+        "Production Pending": r.get("production_pending", 0),
+        "PO No.": get_string_value(r.get("po_numbers")),
+        "Total Released Qty": r.get("total_oa_product_qty", 0),
+        "Zipper Total": r.get("z_total", 0),
+        "Zipper Total Qty": r.get("z_total_q", 0),
+        "Zipper Invoice": get_string_value(r.get("z_invoice")),
+    } for r in records]
 
-def odoo_namelist(uid: int):
-    payload = {"jsonrpc": "2.0", "id": 18, "params": {}}
-    # In browser flow it was likely /web/export/namelist; match that route:
-    return call_odoo_rpc("/web/export/namelist", payload)
 
-def odoo_formats():
-    payload = {"id": 15, "jsonrpc": "2.0", "method": "call", "params": {}}
-    return call_odoo_rpc("/web/export/formats", payload)
-
-def odoo_search_read_ir_exports(uid: int):
-    payload = {
-        "id": 16,
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "ir.exports",
-            "method": "search_read",
-            "args": [],
-            "kwargs": {
-                "context": {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [1, 3]},
-                "domain": [["resource", "=", "combine.invoice"]],
-                "fields": []
-            }
-        }
-    }
-    return call_odoo_rpc("/web/dataset/call_kw/ir.exports/search_read", payload)
-
-# --------- Helper to safely extract display strings (kept from your original) ---------
-def get_string_value(field, subfield=None):
-    if isinstance(field, dict):
-        if subfield:
-            value = field.get(subfield)
-            return get_string_value(value)
-        if "display_name" in field:
-            return str(field["display_name"] or "")
-        # If it's a mapping, join values (fallback)
-        return " ".join([str(v) for v in field.values()])
-    elif isinstance(field, int):
-        return str(field)
-    elif field in (False, None):
-        return ""
-    return str(field)
-
-# --------- Flatten arbitrary records using a field-spec extractor mapping ---------
-def flatten_records(records: List[Dict[str, Any]], field_map: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    field_map: mapping of output_column -> either
-       - string: field name in record (shallow)
-       - tuple/list: (record_key, subfield) for nested object
-       - callable: function(record) -> value
-    """
-    out = []
-    for r in records:
-        row = {}
-        for out_col, spec in field_map.items():
-            try:
-                if callable(spec):
-                    val = spec(r)
-                elif isinstance(spec, (list, tuple)) and len(spec) == 2:
-                    val = get_string_value(r.get(spec[0]), spec[1])
-                else:
-                    val = get_string_value(r.get(spec))
-            except Exception:
-                val = ""
-            row[out_col] = val
-        out.append(row)
-    return out
-
-# --------- Normalize and Group (keeps original behavior) ---------
-def normalize_dates_and_group(df: pd.DataFrame) -> pd.DataFrame:
-    for col in df.columns:
-        if pd.api.types.is_datetime64_any_dtype(df[col]) or df[col].dtype == "object":
-            # try to coerce date-like strings
-            try:
-                df[col] = pd.to_datetime(df[col], errors="coerce")
-            except Exception:
-                pass
-            if pd.api.types.is_datetime64_any_dtype(df[col]):
-                df[col] = df[col].dt.date
-
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    group_cols = [c for c in df.columns if c not in numeric_cols]
-    if numeric_cols:
-        return df.groupby(group_cols, dropna=False)[numeric_cols].sum().reset_index()
-    else:
-        # nothing numeric to sum: drop duplicates so each record appears once
-        return df.drop_duplicates().reset_index(drop=True)
-
-# --------- Rename columns using namelist mapping (label friendly) ---------
-def apply_label_map(df: pd.DataFrame, namelist: List[Dict[str, Any]]) -> pd.DataFrame:
-    """
-    namelist: list of {"name": "<field>", "label": "<Label>"}
-    """
-    name_to_label = {entry["name"]: entry["label"] for entry in namelist}
-    # rename only those columns present
-    new_cols = {col: name_to_label.get(col, col) for col in df.columns}
-    return df.rename(columns=new_cols)
-
-# --------- Paste to Google Sheet (keeps original behavior) ---------
-def paste_to_gsheet(df: pd.DataFrame, sheet_key: str = GOOGLE_SHEET_ID, tab_name: str = SHEET_TAB_NAME):
-    worksheet = gc.open_by_key(sheet_key).worksheet(tab_name)
+# --------- Paste to Google Sheet ---------
+def paste_to_gsheet(df):
+    worksheet = gc.open_by_key(GOOGLE_SHEET_ID).worksheet(SHEET_TAB_NAME)
     if df.empty:
-        print(f"⚠️ Skip: {tab_name} DataFrame is empty.")
+        print(f"⚠️ Skip: {SHEET_TAB_NAME} DataFrame is empty.")
         return
-    worksheet.batch_clear(["A:AG"])
+    worksheet.batch_clear(["A:AJ"])
     set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.update("AI1", [[f"Last Updated: {local_time}"]])
-    print(f"✅ Data pasted to Google Sheet ({tab_name}), timestamp: {local_time}")
+    worksheet.update("AK1", [[f"Last Updated: {local_time}"]])
+    print(f"✅ Data pasted to Google Sheet ({SHEET_TAB_NAME}), timestamp: {local_time}")
 
-# --------- Example usage helpers (adapt these to the payloads you showed) ---------
-def fetch_combine_invoice_example(uid: int):
-    """
-    Recreates the web_search_read you pasted for combine.invoice
-    """
-    specification = {
-        "name": {},
-        "create_date": {},
-        "report_date": {},
-        "delivery_date": {},
-        "create_uid": {"fields": {"display_name": {}}},
-        "partner_id": {"fields": {"display_name": {}}},
-        "invoice_date": {},
-        "invoice_payment_term_id": {"fields": {"display_name": {}}},
-        "invoice_incoterm_id": {"fields": {"display_name": {}}},
-        "sales_person": {"fields": {"display_name": {}}},
-        "team_id": {"fields": {"display_name": {}}},
-        "buyer_name": {"fields": {"display_name": {}}},
-        "z_total_q": {},
-        "m_total_q": {},
-        "z_total": {},
-        "m_total": {},
-        "qty_total": {},
-        "amount_total": {},
-        "state": {},
-    }
-    domain = [["state", "=", "posted"]]
-    records = odoo_web_search_read("combine.invoice", specification, domain=domain, uid=uid, limit=80)
-    return records
 
-def fetch_combine_invoice_line_example(uid: int, start_date="2025-04-01", end_date="2025-04-30"):
-    """
-    Recreate your combine.invoice.line fetch with the more generic caller:
-    """
-    specification = {
-        "sale_order_line": {"fields": {"order_id": {"fields": {"display_name": {}}}}},
-        "invoice_id": {"fields": {"display_name": {}, "lc_no": {}, "lc_date": {}, "invoice_payment_term_id": {}}},
-        "buying_house": {"fields": {"display_name": {}}},
-        "product_uom_category_id": {"fields": {"display_name": {}}},
-        "company_id": {"fields": {"display_name": {}}},
-        "invoice_date": {},
-        "parent_state": {},
-        "quantity": {},
-        "price_total": {},
-        "fg_categ_type": {},
-        "sales_ots_line": {"fields": {"id": {}}},
-        "marketing_ots_line": {"fields": {"id": {}}},
-        "buyer_id": {"fields": {"display_name": {}}},
-        "buyer_group": {"fields": {"display_name": {}}},
-        "customer_id": {"fields": {"display_name": {}}},
-        "customer_group": {"fields": {"display_name": {}}},
-        "sales_person": {"fields": {"display_name": {}}},
-        "team_id": {"fields": {"display_name": {}}},
-        "country_id": {"fields": {"display_name": {}}},
-    }
-    domain = ["&", ["parent_state", "=", "posted"], "&", ["invoice_date", ">=", start_date], ["invoice_date", "<=", end_date]]
-    records = odoo_web_search_read("combine.invoice.line", specification, domain=domain, uid=uid, limit=2000)
-    return records
-
-# --------- Quick mapping for flattening the combine.invoice.line into columns you used earlier ---------
-COMBINE_INV_LINE_FIELD_MAP = {
-    "Sale Order Ref": ("sale_order_line", "order_id"),
-    "Customer Invoice Items": "invoice_id",
-    "Buying House": ("buying_house", None),
-    "Category": ("product_uom_category_id", None),
-    "Company": ("company_id", None),
-    "Invoice Date": "invoice_date",
-    "Status": "parent_state",
-    "Quantity": lambda r: r.get("quantity", 0),
-    "Total": lambda r: r.get("price_total", 0),
-    "Item": "fg_categ_type",
-    "Sales Ots Line ID": ("sales_ots_line", "id"),
-    "Marketing Ots Line ID": ("marketing_ots_line", "id"),
-    "LC No": ("invoice_id", "lc_no"),
-    "LC Date": ("invoice_id", "lc_date"),
-    "Payment Terms": ("invoice_id", "invoice_payment_term_id"),
-    "Buyer": ("buyer_id", None),
-    "Buyer Group": ("buyer_group", None),
-    "Customer": ("customer_id", None),
-    "Customer Group": ("customer_group", None),
-    "Sales Person": ("sales_person", None),
-    "Team": ("team_id", None),
-    "Country": ("country_id", None),
-}
-
-# --------- The main runnable example (adjust as you like) ---------
 if __name__ == "__main__":
     uid = odoo_login()
-
-    # Example A: fetch combine.invoice (like your browser web_search_read)
-    inv_records = fetch_combine_invoice_example(uid)
-    print(f"combine.invoice records fetched: {len(inv_records)}")
-
-    # Example B: fetch combine.invoice.line (your original target)
-    recs = fetch_combine_invoice_line_example(uid, start_date="2025-04-01", end_date="2025-04-30")
-    flat_rows = flatten_records(recs, COMBINE_INV_LINE_FIELD_MAP)
+    records = fetch_combine_invoice(uid)
+    flat_rows = flatten_invoice_records(records)
     df = pd.DataFrame(flat_rows)
-
-    # If the Odoo returned nested date strings, try converting them; keep consistent with your normalization
-    grouped_df = normalize_dates_and_group(df)
-
-    # Optional: fetch namelist mapping from Odoo and apply label names
-    try:
-        namelist_response = odoo_namelist(uid)  # This returns the same shape you included earlier
-        # The actual path you used in browser may return the list under result; handle both:
-        namelist_list = namelist_response.get("result") if isinstance(namelist_response, dict) and namelist_response.get("result") else namelist_response
-        if isinstance(namelist_list, dict) and "result" in namelist_list:
-            namelist_list = namelist_list["result"]
-        if isinstance(namelist_list, list) and len(namelist_list) > 0 and isinstance(namelist_list[0], dict) and "label" in namelist_list[0]:
-            grouped_df = apply_label_map(grouped_df, namelist_list)
-            print("Applied label map from namelist.")
-    except Exception as e:
-        print(f"Could not fetch/parse namelist: {e}")
-
-    # paste to sheet
-    paste_to_gsheet(grouped_df)
+    paste_to_gsheet(df)
