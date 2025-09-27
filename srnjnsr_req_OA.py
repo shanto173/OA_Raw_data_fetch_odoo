@@ -277,10 +277,10 @@ def paste_to_gsheet(df, sheet_name):
         if df.empty:
             print(f"⚠️ Skip: {sheet_name} is empty")
             return
-        worksheet.batch_clear(["A:Z"])  # more columns now
+        worksheet.batch_clear(["A:AC"])  # more columns now
         set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
         local_time = datetime.now(pytz.timezone("Asia/Dhaka")).strftime("%Y-%m-%d %H:%M:%S")
-        worksheet.update("AA1", [[f"Last Updated: {local_time}"]])
+        worksheet.update("AD1", [[f"Last Updated: {local_time}"]])
         print(f"✅ Data pasted to {sheet_name} and timestamp updated")
     except Exception as e:
         print(f"❌ Error pasting to {sheet_name}: {e}")
