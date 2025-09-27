@@ -14,6 +14,7 @@ on:
           - OA_ITEM_WISE_data_fetch_odoo.py
           - APR_Combone_Inv_data_fetch.py
           - FG_Dispatch_data_fetch.py
+          - AR_Report_combine_invoice.py
   schedule:
     - cron: "0 */2 * * *"  # Every 2 hrs daily
 
@@ -61,5 +62,10 @@ jobs:
           if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "FG_Dispatch_data_fetch.py" ]]; then
             echo "Running FG_Dispatch_data_fetch.py..."
             python FG_Dispatch_data_fetch.py
+          fi
+
+          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "AR_Report_combine_invoice.py" ]]; then
+            echo "Running AR_Report_combine_invoice.py..."
+            python AR_Report_combine_invoice.py
           fi
 
