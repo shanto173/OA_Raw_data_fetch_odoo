@@ -14,7 +14,6 @@ on:
           - OA_ITEM_WISE_data_fetch_odoo.py
           - APR_Combone_Inv_data_fetch.py
           - FG_Dispatch_data_fetch.py
-          - srnjnsr_req_OA.py
   schedule:
     - cron: "0 */2 * * *"  # Every 2 hrs daily
 
@@ -64,7 +63,3 @@ jobs:
             python FG_Dispatch_data_fetch.py
           fi
 
-          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "srnjnsr_req_OA.py" ]]; then
-            echo "Running srnjnsr_req_OA.py..."
-            python srnjnsr_req_OA.py
-          fi
