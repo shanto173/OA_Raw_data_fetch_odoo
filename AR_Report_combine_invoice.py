@@ -9,7 +9,6 @@ import time
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
-from requests.exceptions import ConnectionError, HTTPError
 
 # --------- Environment Variables ---------
 ODOO_URL = os.getenv("ODOO_URL")
@@ -20,41 +19,42 @@ GOOGLE_CREDENTIALS_BASE64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1sPVTbTppdEn7_S2hFyYGTF2pUoyOx19NM4siqbCKFCw")
 SHEET_TAB_NAME = os.getenv("SHEET_TAB_NAME", "Raw_Data")
 
+# --------- Logger ---------
+def log(message):
+    now = datetime.now(pytz.timezone("Asia/Dhaka")).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now}] {message}")
+
 # --------- Setup Google Credentials ---------
+log("🔹 Setting up Google credentials...")
 creds_json = json.loads(base64.b64decode(GOOGLE_CREDENTIALS_BASE64))
 creds = Credentials.from_service_account_info(
     creds_json,
     scopes=["https://www.googleapis.com/auth/spreadsheets"]
 )
 gc = gspread.authorize(creds)
+log("✅ Google credentials authorized.")
 
+# --------- HTTP Session ---------
 session = requests.Session()
 session.headers.update({"Content-Type": "application/json"})
 
+# --------- Login to Odoo ---------
+def odoo_login():
+    log("🔹 Entering function: odoo_login()")
+    url = f"{ODOO_URL}/web/session/authenticate"
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {"db": ODOO_DB, "login": ODOO_USERNAME, "password": ODOO_PASSWORD},
+        "id": 1,
+    }
+    resp = session.post(url, data=json.dumps(payload))
+    resp.raise_for_status()
+    uid = resp.json()["result"]["uid"]
+    log(f"✅ Logged in to Odoo! UID: {uid}")
+    return uid
 
-# --------- Helper Functions ---------
-def log(msg):
-    local_tz = pytz.timezone("Asia/Dhaka")
-    timestamp = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {msg}")
-
-
-def safe_post(url, payload, retries=5, wait=5):
-    for attempt in range(1, retries + 1):
-        try:
-            resp = session.post(url, data=json.dumps(payload))
-            resp.raise_for_status()
-            return resp
-        except (ConnectionError, HTTPError) as e:
-            log(f"⚠️ Attempt {attempt} failed: {e}")
-            if attempt < retries:
-                log(f"⏳ Retrying in {wait} seconds...")
-                time.sleep(wait)
-            else:
-                log("❌ Max retries reached. Exiting.")
-                raise
-
-
+# --------- Helper for safely extracting string values ---------
 def get_string_value(field, subfield=None):
     if isinstance(field, dict):
         if subfield:
@@ -69,77 +69,85 @@ def get_string_value(field, subfield=None):
         return ""
     return str(field)
 
+# --------- Fetch single batch from Odoo ---------
+def fetch_batch(uid, offset=0, batch_size=1000):
+    log(f"🔹 Entering function: fetch_batch(offset={offset}, batch_size={batch_size})")
+    domain = [["state", "=", "posted"]]
+    specification = {
+        "name": {}, "invoice_date": {}, "buyer_name": {"fields": {"display_name": {}}}, 
+        "partner_id": {"fields": {"display_name": {}}}, "delivery_date": {}, "amount_total": {},
+        "commercial_doc_revd_date": {}, "commercial_handover_date": {}, "finance_team_submitted_date": {},
+        "acceptance_date": {}, "docs_state": {}, "oa_state": {}, "payment_maturity_date": {}, "payment_recv_date": {},
+        "invoice_payment_term_id": {"fields": {"display_name": {}}}, "lc_no": {}, "lc_date": {}, 
+        "currency_id": {"fields": {"display_name": {}}}, "fg_delivery": {}, "fg_delivery_pending": {}, 
+        "fg_receiving": {}, "m_total": {}, "m_total_q": {}, "m_invoice": {}, "pi_numbers": {}, "production_qty": {},
+        "qty_total": {}, "production_pending": {}, "po_numbers": {}, "total_oa_product_qty": {},
+        "z_total": {}, "z_total_q": {}, "z_invoice": {}
+    }
 
-# --------- Odoo Login ---------
-def odoo_login():
-    url = f"{ODOO_URL}/web/session/authenticate"
     payload = {
         "jsonrpc": "2.0",
         "method": "call",
-        "params": {"db": ODOO_DB, "login": ODOO_USERNAME, "password": ODOO_PASSWORD},
-        "id": 1,
+        "params": {
+            "model": "combine.invoice",
+            "method": "web_search_read",
+            "args": [],
+            "kwargs": {
+                "domain": domain,
+                "specification": specification,
+                "offset": offset,
+                "limit": batch_size,
+                "order": "",
+                "context": {
+                    "lang": "en_US",
+                    "tz": "Asia/Dhaka",
+                    "uid": uid,
+                    "allowed_company_ids": [1, 3],
+                    "bin_size": True,
+                    "current_company_id": 1,
+                },
+                "count_limit": 100000,
+            },
+        },
+        "id": offset + 1,
     }
-    resp = safe_post(url, payload)
-    uid = resp.json()["result"]["uid"]
-    log(f"✅ Logged in! UID: {uid}")
-    return uid
 
+    resp = session.post(f"{ODOO_URL}/web/dataset/call_kw/combine.invoice/web_search_read",
+                        data=json.dumps(payload))
+    resp.raise_for_status()
+    return resp.json()["result"].get("records", [])
 
-# --------- Fetch Combine Invoice Batch-wise ---------
-def fetch_combine_invoice(uid, batch_size=500):
+# --------- Fetch all records safely batch-wise ---------
+def fetch_combine_invoice(uid, batch_size=1000, max_retries=3):
+    log("🔹 Entering function: fetch_combine_invoice()")
     all_records = []
     offset = 0
-    domain = [["state", "=", "posted"]]
 
-    specification = {
-        "name": {}, "invoice_date": {}, "buyer_name": {"fields": {"display_name": {}}},
-        "partner_id": {"fields": {"display_name": {}}}, "delivery_date": {}, "amount_total": {},
-        "commercial_doc_revd_date": {}, "commercial_handover_date": {}, "finance_team_submitted_date": {},
-        "acceptance_date": {}, "docs_state": {}, "oa_state": {}, "payment_maturity_date": {},
-        "payment_recv_date": {}, "invoice_payment_term_id": {"fields": {"display_name": {}}},
-        "lc_no": {}, "lc_date": {}, "currency_id": {"fields": {"display_name": {}}},
-        "fg_delivery": {}, "fg_delivery_pending": {}, "fg_receiving": {}, "m_total": {}, "m_total_q": {},
-        "m_invoice": {}, "pi_numbers": {}, "production_qty": {}, "qty_total": {}, "production_pending": {},
-        "po_numbers": {}, "total_oa_product_qty": {}, "z_total": {}, "z_total_q": {}, "z_invoice": {},
-    }
-
-    log("🔹 Starting to fetch combine.invoice records batch-wise...")
     while True:
-        payload = {
-            "jsonrpc": "2.0",
-            "method": "call",
-            "params": {
-                "model": "combine.invoice",
-                "method": "web_search_read",
-                "args": [],
-                "kwargs": {
-                    "domain": domain,
-                    "specification": specification,
-                    "offset": offset,
-                    "limit": batch_size,
-                    "context": {"lang": "en_US", "tz": "Asia/Dhaka", "uid": uid, "allowed_company_ids": [1,3]},
-                    "count_limit": 100000,
-                },
-            },
-            "id": offset // batch_size + 1,
-        }
-
-        resp = safe_post(f"{ODOO_URL}/web/dataset/call_kw/combine.invoice/web_search_read", payload)
-        result = resp.json()["result"]
-        batch_records = result.get("records", [])
-        all_records.extend(batch_records)
-        log(f"📦 Fetched batch: {len(batch_records)} records | Total so far: {len(all_records)}")
-
-        if len(batch_records) < batch_size:
-            break
-        offset += batch_size
-
-    log(f"✅ Finished fetching all records. Total: {len(all_records)}")
+        for attempt in range(1, max_retries + 1):
+            try:
+                log(f"🔹 Fetching batch starting at offset {offset}, attempt {attempt}...")
+                batch = fetch_batch(uid, offset=offset, batch_size=batch_size)
+                if not batch:
+                    log("✅ No more records to fetch.")
+                    return all_records
+                all_records.extend(batch)
+                log(f"📦 Batch fetched: {len(batch)} records, total so far: {len(all_records)}")
+                offset += batch_size
+                break
+            except Exception as e:
+                log(f"⚠️ Batch fetch failed: {e}")
+                if attempt < max_retries:
+                    log("⏳ Retrying in 5 seconds...")
+                    time.sleep(5)
+                else:
+                    log("❌ Max retries reached. Exiting fetch.")
+                    raise
     return all_records
-
 
 # --------- Flatten Records ---------
 def flatten_invoice_records(records):
+    log("🔹 Entering function: flatten_invoice_records()")
     return [{
         "Number": get_string_value(r.get("name")),
         "Invoice/Bill Date": get_string_value(r.get("invoice_date")),
@@ -176,9 +184,9 @@ def flatten_invoice_records(records):
         "Zipper Invoice": get_string_value(r.get("z_invoice")),
     } for r in records]
 
-
 # --------- Paste to Google Sheet ---------
 def paste_to_gsheet(df):
+    log("🔹 Entering function: paste_to_gsheet()")
     worksheet = gc.open_by_key(GOOGLE_SHEET_ID).worksheet(SHEET_TAB_NAME)
     if df.empty:
         log(f"⚠️ Skip: {SHEET_TAB_NAME} DataFrame is empty.")
@@ -191,14 +199,13 @@ def paste_to_gsheet(df):
     worksheet.update("AK1", [[f"Last Updated: {local_time}"]])
     log(f"✅ Data pasted to Google Sheet ({SHEET_TAB_NAME}), timestamp: {local_time}")
 
-
 # --------- Main ---------
 if __name__ == "__main__":
     log("🔹 Script started...")
     uid = odoo_login()
-    records = fetch_combine_invoice(uid)
+    records = fetch_combine_invoice(uid, batch_size=1000)
+    log(f"🔹 Total records fetched: {len(records)}")
     flat_rows = flatten_invoice_records(records)
     df = pd.DataFrame(flat_rows)
-    log(f"📊 Total rows ready to paste: {len(df)}")
     paste_to_gsheet(df)
     log("✅ Script finished successfully!")
