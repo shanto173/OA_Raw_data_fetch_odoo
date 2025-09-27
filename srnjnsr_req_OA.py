@@ -16,7 +16,7 @@ ODOO_DB = os.getenv("ODOO_DB")
 ODOO_USERNAME = os.getenv("ODOO_USERNAME")
 ODOO_PASSWORD = os.getenv("ODOO_PASSWORD")
 GOOGLE_CREDENTIALS_BASE64 = os.getenv("GOOGLE_CREDENTIALS_BASE64")
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1V0x5_DJn6bC1xzyMeBglzSeH-eDIWtKG4E5Cv3rwA_I")
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1ldDwD1q2Fl0wbi2wrf0q37rziNEK-a-mGpx3z-GtwZs")
 
 # Decode Google Service Account credentials
 creds_json = json.loads(base64.b64decode(GOOGLE_CREDENTIALS_BASE64))
@@ -289,7 +289,7 @@ def paste_to_gsheet(df, sheet_name):
 
 if __name__ == "__main__":
     uid = odoo_login()
-    company_map = [(1, "OA_ITEM_DF_ZIP"), (3, "OA_ITEM_DF_MT")]
+    company_map = [(1, "ZIP"), (3, "MT")]
 
     for company_id, sheet_tab in company_map:
         print(f"\n{'='*50}\nProcessing data for Company {company_id}...")
