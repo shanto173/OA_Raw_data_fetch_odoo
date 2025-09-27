@@ -19,12 +19,14 @@ GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1sPVTbTppdEn7_S2hFyYGTF2pUoyOx19
 SHEET_TAB_NAME = os.getenv("SHEET_TAB_NAME", "Raw_Data")
 
 # --------- Setup Google Credentials ---------
+print("🔹 Setting up Google credentials...")
 creds_json = json.loads(base64.b64decode(GOOGLE_CREDENTIALS_BASE64))
 creds = Credentials.from_service_account_info(
     creds_json,
     scopes=["https://www.googleapis.com/auth/spreadsheets"]
 )
 gc = gspread.authorize(creds)
+print("✅ Google credentials authorized.")
 
 session = requests.Session()
 session.headers.update({"Content-Type": "application/json"})
@@ -32,6 +34,7 @@ session.headers.update({"Content-Type": "application/json"})
 
 # --------- Login to Odoo ---------
 def odoo_login():
+    print("🔹 Logging into Odoo...")
     url = f"{ODOO_URL}/web/session/authenticate"
     payload = {
         "jsonrpc": "2.0",
@@ -42,7 +45,7 @@ def odoo_login():
     resp = session.post(url, data=json.dumps(payload))
     resp.raise_for_status()
     uid = resp.json()["result"]["uid"]
-    print(f"✅ Logged in! UID: {uid}")
+    print(f"✅ Logged in to Odoo! UID: {uid}")
     return uid
 
 
@@ -64,6 +67,7 @@ def get_string_value(field, subfield=None):
 
 # --------- Fetch Combine Invoice ---------
 def fetch_combine_invoice(uid, batch_size=2000):
+    print("🔹 Starting fetch for combine.invoice...")
     all_records = []
     offset = 0
 
@@ -108,6 +112,7 @@ def fetch_combine_invoice(uid, batch_size=2000):
     }
 
     while True:
+        print(f"🔹 Fetching batch starting at offset {offset}...")
         payload = {
             "jsonrpc": "2.0",
             "method": "call",
@@ -141,18 +146,20 @@ def fetch_combine_invoice(uid, batch_size=2000):
         result = resp.json()["result"]
         records = result.get("records", [])
         all_records.extend(records)
-        print(f"Fetched {len(records)} records, total so far: {len(all_records)}")
+        print(f"   ✅ Fetched {len(records)} records in this batch. Total so far: {len(all_records)}")
         if len(records) < batch_size:
+            print("🔹 No more records to fetch.")
             break
         offset += batch_size
 
-    print(f"✅ Finished. Total fetched: {len(all_records)}")
+    print(f"✅ Finished fetching all records. Total: {len(all_records)}")
     return all_records
 
 
 # --------- Flatten Records ---------
 def flatten_invoice_records(records):
-    return [{
+    print("🔹 Flattening records...")
+    flat = [{
         "Number": get_string_value(r.get("name")),
         "Invoice/Bill Date": get_string_value(r.get("invoice_date")),
         "Buyer": get_string_value(r.get("buyer_name")),
@@ -187,10 +194,13 @@ def flatten_invoice_records(records):
         "Zipper Total Qty": r.get("z_total_q", 0),
         "Zipper Invoice": get_string_value(r.get("z_invoice")),
     } for r in records]
+    print(f"✅ Flattened {len(flat)} records.")
+    return flat
 
 
 # --------- Paste to Google Sheet ---------
 def paste_to_gsheet(df):
+    print("🔹 Pasting data to Google Sheet...")
     worksheet = gc.open_by_key(GOOGLE_SHEET_ID).worksheet(SHEET_TAB_NAME)
     if df.empty:
         print(f"⚠️ Skip: {SHEET_TAB_NAME} DataFrame is empty.")
@@ -205,8 +215,10 @@ def paste_to_gsheet(df):
 
 
 if __name__ == "__main__":
+    print("🔹 Script started...")
     uid = odoo_login()
     records = fetch_combine_invoice(uid)
     flat_rows = flatten_invoice_records(records)
     df = pd.DataFrame(flat_rows)
     paste_to_gsheet(df)
+    print("✅ Script finished successfully!")
