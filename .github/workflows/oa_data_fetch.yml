@@ -66,6 +66,7 @@ jobs:
 
           if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "AR_Report_combine_invoice.py" ]]; then
             echo "Running AR_Report_combine_invoice.py..."
-            python AR_Report_combine_invoice.py
+            python -u AR_Report_combine_invoice.py
+
           fi
 
