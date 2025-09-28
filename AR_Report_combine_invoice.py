@@ -210,12 +210,12 @@ def paste_to_gsheet(df):
     if df.empty:
         log(f"⚠️ Skip: {SHEET_TAB_NAME} DataFrame is empty.")
         return
-    worksheet.batch_clear(["A:AJ"])
+    worksheet.batch_clear(["A:AM"])
     set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.update("AK1", [[f"Last Updated: {local_time}"]])
+    worksheet.update("AN1", [[f"Last Updated: {local_time}"]])
     log(f"✅ Data pasted to Google Sheet ({SHEET_TAB_NAME}), timestamp: {local_time}")
 
 # --------- Main ---------
