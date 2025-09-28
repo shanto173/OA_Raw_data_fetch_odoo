@@ -82,7 +82,7 @@ def fetch_batch(uid, offset=0, batch_size=1000):
         "currency_id": {"fields": {"display_name": {}}}, "fg_delivery": {}, "fg_delivery_pending": {}, 
         "fg_receiving": {}, "m_total": {}, "m_total_q": {}, "m_invoice": {}, "pi_numbers": {}, "production_qty": {},
         "qty_total": {}, "production_pending": {}, "po_numbers": {}, "total_oa_product_qty": {},
-        "z_total": {}, "z_total_q": {}, "z_invoice": {}
+        "z_total": {}, "z_total_q": {}, "z_invoice": {},"style_ref":{}
     }
 
     payload = {
@@ -182,6 +182,8 @@ def flatten_invoice_records(records):
         "Zipper Total": r.get("z_total", 0),
         "Zipper Total Qty": r.get("z_total_q", 0),
         "Zipper Invoice": get_string_value(r.get("z_invoice")),
+        "Style Ref": get_string_value(r.get("style_ref")),
+        "Sales Team":get_string_value(r.get("team_id"))
     } for r in records]
 
 # --------- Paste to Google Sheet ---------
