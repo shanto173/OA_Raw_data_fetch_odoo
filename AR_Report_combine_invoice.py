@@ -56,18 +56,30 @@ def odoo_login():
 
 # --------- Helper for safely extracting string values ---------
 def get_string_value(field, subfield=None):
+    """
+    Safely extract a string from an Odoo field.
+    Works for plain values, integers, None, or dicts (Many2one fields).
+    """
     if isinstance(field, dict):
+        # If a subfield is requested, go deeper
         if subfield:
-            value = field.get(subfield)
-            return get_string_value(value)
+            return get_string_value(field.get(subfield))
+        # Odoo Many2one typically has 'id' and 'display_name'
         if "display_name" in field:
             return str(field["display_name"] or "")
+        # fallback: join all values in dict
         return " ".join([str(v) for v in field.values()])
-    elif isinstance(field, int):
-        return str(field)
+    elif isinstance(field, (list, tuple)):
+        # Some Odoo APIs return Many2one as [id, display_name]
+        if len(field) >= 2:
+            return str(field[1] or "")
+        elif len(field) == 1:
+            return str(field[0])
+        return ""
     elif field in (False, None):
         return ""
     return str(field)
+
 
 # --------- Fetch single batch from Odoo ---------
 def fetch_batch(uid, offset=0, batch_size=1000):
@@ -183,8 +195,13 @@ def flatten_invoice_records(records):
         "Zipper Total Qty": r.get("z_total_q", 0),
         "Zipper Invoice": get_string_value(r.get("z_invoice")),
         "Style Ref": get_string_value(r.get("style_ref")),
-        "Sales Team":get_string_value(r.get("team_id"))
+        "Beneficiary": get_string_value(r.get("beneficiary")),
+        "Bank Ref": get_string_value(r.get("customers_bank_ref")),
+        "Customer Bank Submit Date": get_string_value(r.get("customers_bank_submit_date")),
+        "Recipient Bank": get_string_value(r.get("partner_bank_id")),
+        "Sales Team": get_string_value(r.get("team_id")),
     } for r in records]
+
 
 # --------- Paste to Google Sheet ---------
 def paste_to_gsheet(df):
