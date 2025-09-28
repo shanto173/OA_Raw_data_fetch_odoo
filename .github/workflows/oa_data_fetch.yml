@@ -16,7 +16,7 @@ on:
           - FG_Dispatch_data_fetch.py
           - AR_Report_combine_invoice.py
   schedule:
-    - cron: "0 */2 * * *"  # Every 2 hrs daily
+    - cron: "0 */2 * * *"  # Every 2 hours daily
 
 jobs:
   fetch-oa-data:
@@ -41,32 +41,34 @@ jobs:
           ODOO_PASSWORD: ${{ secrets.ODOO_PASSWORD }}
           GOOGLE_CREDENTIALS_BASE64: ${{ secrets.GOOGLE_CREDENTIALS_BASE64 }}
         run: |
-          echo "Selected script: ${{ github.event.inputs.script_choice }}"
+          # Fallback to ALL if no input provided (like in scheduled runs)
+          SCRIPT_CHOICE="${{ github.event.inputs.script_choice }}"
+          if [ -z "$SCRIPT_CHOICE" ]; then
+            SCRIPT_CHOICE="ALL"
+          fi
+          echo "Selected script: $SCRIPT_CHOICE"
 
-          # Example: Uncomment if you want to include OA_data_fetch_odoo.py
-          # if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "OA_data_fetch_odoo.py" ]]; then
-          #   echo "Running OA_data_fetch_odoo.py..."
-          #   python OA_data_fetch_odoo.py
-          # fi
+          if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "OA_data_fetch_odoo.py" ]]; then
+            echo "Running OA_data_fetch_odoo.py..."
+            python OA_data_fetch_odoo.py
+          fi
 
-          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "OA_ITEM_WISE_data_fetch_odoo.py" ]]; then
+          if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "OA_ITEM_WISE_data_fetch_odoo.py" ]]; then
             echo "Running OA_ITEM_WISE_data_fetch_odoo.py..."
             python OA_ITEM_WISE_data_fetch_odoo.py
           fi
 
-          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "APR_Combone_Inv_data_fetch.py" ]]; then
+          if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "APR_Combone_Inv_data_fetch.py" ]]; then
             echo "Running APR_Combone_Inv_data_fetch.py..."
             python APR_Combone_Inv_data_fetch.py
           fi
 
-          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "FG_Dispatch_data_fetch.py" ]]; then
+          if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "FG_Dispatch_data_fetch.py" ]]; then
             echo "Running FG_Dispatch_data_fetch.py..."
             python FG_Dispatch_data_fetch.py
           fi
 
-          if [[ "${{ github.event.inputs.script_choice }}" == "ALL" || "${{ github.event.inputs.script_choice }}" == "AR_Report_combine_invoice.py" ]]; then
+          if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "AR_Report_combine_invoice.py" ]]; then
             echo "Running AR_Report_combine_invoice.py..."
             python -u AR_Report_combine_invoice.py
-
           fi
-
