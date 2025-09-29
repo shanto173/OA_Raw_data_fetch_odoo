@@ -10,7 +10,7 @@ on:
         type: choice
         options:
           - ALL
-          - OA_data_fetch_odoo.py
+          # - OA_data_fetch_odoo.py
           - OA_ITEM_WISE_data_fetch_odoo.py
           - APR_Combone_Inv_data_fetch.py
           - FG_Dispatch_data_fetch.py
@@ -48,10 +48,10 @@ jobs:
           fi
           echo "Selected script: $SCRIPT_CHOICE"
 
-          if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "OA_data_fetch_odoo.py" ]]; then
-            echo "Running OA_data_fetch_odoo.py..."
-            python OA_data_fetch_odoo.py
-          fi
+          # if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "OA_data_fetch_odoo.py" ]]; then
+          #   echo "Running OA_data_fetch_odoo.py..."
+          #   python OA_data_fetch_odoo.py
+          # fi
 
           if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "OA_ITEM_WISE_data_fetch_odoo.py" ]]; then
             echo "Running OA_ITEM_WISE_data_fetch_odoo.py..."
