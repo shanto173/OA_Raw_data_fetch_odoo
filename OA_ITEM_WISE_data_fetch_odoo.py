@@ -250,30 +250,41 @@ if __name__ == "__main__":
     uid = odoo_login()
     company_map = [(1, "OA_ITEM_DF_ZIP"), (3, "OA_ITEM_DF_MT")]
 
+    MAX_RETRIES = 10  # Number of retries per company
+
     for company_id, sheet_tab in company_map:
         print(f"\n{'='*50}")
         print(f"Processing data for Company {company_id}...")
-        
-        records = fetch_sale_orders_for_company(uid, company_id)
-        flat_rows = flatten_records(records)
-        df = pd.DataFrame(flat_rows)
 
-        if df.empty:
-            print(f"⚠️ No data for Company {company_id}")
-            continue
+        retries = 0
+        while retries < MAX_RETRIES:
+            try:
+                records = fetch_sale_orders_for_company(uid, company_id)
+                flat_rows = flatten_records(records)
+                df = pd.DataFrame(flat_rows)
 
-        # Automatically find numeric columns for aggregation
-        numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+                if df.empty:
+                    print(f"⚠️ No data for Company {company_id}")
+                    break
 
-        # Automatically find non-numeric columns for group by
-        group_cols = [col for col in df.columns if col not in numeric_cols]
+                # Automatically find numeric columns for aggregation
+                numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
 
-        # Create aggregation dictionary dynamically (sum for numbers)
-        agg_dict = {col: "sum" for col in numeric_cols}
+                # Automatically find non-numeric columns for group by
+                group_cols = [col for col in df.columns if col not in numeric_cols]
 
-        # Group by ALL non-numeric columns
-        df_grouped = df.groupby(group_cols, as_index=False).agg(agg_dict).round(2)  # Round to 2 decimals for money/quantities
+                # Create aggregation dictionary dynamically (sum for numbers)
+                agg_dict = {col: "sum" for col in numeric_cols}
 
-        paste_to_gsheet(df_grouped, sheet_tab)
-    
-    print("\n✅ All companies processed successfully!")
+                # Group by ALL non-numeric columns
+                df_grouped = df.groupby(group_cols, as_index=False).agg(agg_dict).round(2)
+
+                paste_to_gsheet(df_grouped, sheet_tab)
+                print(f"✅ Finished processing Company {company_id}")
+                break  # Success, exit retry loop
+
+            except Exception as e:
+                retries += 1
+                print(f"❌ Error processing Company {company_id} (attempt {retries}/{MAX_RETRIES}): {e}")
+                if retries == MAX_RETRIES:
+                    print(f"⚠️ Failed to process Company {company_id} after {MAX_RETRIES} attempts.")

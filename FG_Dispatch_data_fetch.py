@@ -408,100 +408,110 @@ def paste_to_gsheet(df):
 
 # --------- Main ---------
 if __name__ == "__main__":
-    logger.info("Starting main script...")
-    uid = odoo_login()
+    MAX_RETRIES = 10  # Total retries for the full pipeline
+    RETRY_DELAY = 5  # Seconds to wait before retry
+    retries = 0
 
-    # Fetch for both companies
-    companies = [1, 3]
-    all_records = []
-    unique_line_ids_for_fallback = set()
+    while retries < MAX_RETRIES:
+        try:
+            logger.info("Starting main script attempt %d...", retries + 1)
+            uid = odoo_login()
 
-    for company_id in companies:
-        logger.info(f"Starting fetch for Company {company_id}...")
-        records = fetch_operation_details(uid, company_id)
-        all_records.extend(records)
+            # Fetch for both companies
+            companies = [1, 3]
+            all_records = []
+            unique_line_ids_for_fallback = set()
 
-        # collect fallback invoice line ids for lines that didn't include nested data
-        for record in records:
-            invoice_field = record.get("invoice_line_id", False)
-            if not invoice_field:
-                continue
-            if isinstance(invoice_field, dict):
-                # many2one case
-                has_date = bool(invoice_field.get("invoice_date"))
-                has_status = bool(invoice_field.get("parent_state"))
-                if not has_date or not has_status:
-                    lid = invoice_field.get("id")
-                    if lid:
-                        unique_line_ids_for_fallback.add(lid)
-            elif isinstance(invoice_field, list):
-                if invoice_field:
-                    if isinstance(invoice_field[0], dict):
-                        for entry in invoice_field:
-                            has_date = bool(entry.get("invoice_date"))
-                            has_status = bool(entry.get("parent_state"))
-                            if not has_date or not has_status:
-                                lid = entry.get("id")
-                                if lid:
-                                    unique_line_ids_for_fallback.add(lid)
-                    else:
-                        if isinstance(invoice_field[0], int):
-                            for lid in invoice_field:
-                                if lid:
-                                    unique_line_ids_for_fallback.add(lid)
-                        elif isinstance(invoice_field[0], (list, tuple)):
-                            for el in invoice_field:
-                                if isinstance(el, (list, tuple)) and len(el) >= 1:
-                                    lid = el[0]
-                                    if lid:
-                                        unique_line_ids_for_fallback.add(lid)
-                if len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)):
-                    lid = invoice_field[0]
-                    if lid:
-                        unique_line_ids_for_fallback.add(lid)
+            for company_id in companies:
+                logger.info(f"Starting fetch for Company {company_id}...")
+                records = fetch_operation_details(uid, company_id)
+                all_records.extend(records)
 
-    logger.info(f"Unique invoice line IDs to fallback-fetch: {len(unique_line_ids_for_fallback)}")
+                # collect fallback invoice line ids for lines that didn't include nested data
+                for record in records:
+                    invoice_field = record.get("invoice_line_id", False)
+                    if not invoice_field:
+                        continue
+                    if isinstance(invoice_field, dict):
+                        has_date = bool(invoice_field.get("invoice_date"))
+                        has_status = bool(invoice_field.get("parent_state"))
+                        if not has_date or not has_status:
+                            lid = invoice_field.get("id")
+                            if lid:
+                                unique_line_ids_for_fallback.add(lid)
+                    elif isinstance(invoice_field, list):
+                        if invoice_field:
+                            if isinstance(invoice_field[0], dict):
+                                for entry in invoice_field:
+                                    has_date = bool(entry.get("invoice_date"))
+                                    has_status = bool(entry.get("parent_state"))
+                                    if not has_date or not has_status:
+                                        lid = entry.get("id")
+                                        if lid:
+                                            unique_line_ids_for_fallback.add(lid)
+                            else:
+                                if isinstance(invoice_field[0], int):
+                                    for lid in invoice_field:
+                                        if lid:
+                                            unique_line_ids_for_fallback.add(lid)
+                                elif isinstance(invoice_field[0], (list, tuple)):
+                                    for el in invoice_field:
+                                        if isinstance(el, (list, tuple)) and len(el) >= 1:
+                                            lid = el[0]
+                                            if lid:
+                                                unique_line_ids_for_fallback.add(lid)
+                        if len(invoice_field) == 2 and isinstance(invoice_field[0], (int, bool)):
+                            lid = invoice_field[0]
+                            if lid:
+                                unique_line_ids_for_fallback.add(lid)
 
-    # Fetch data for the fallback IDs (only those that did not have inline invoice_date or parent_state)
-    line_to_data = fetch_invoice_data(uid, unique_line_ids_for_fallback)
+            logger.info(f"Unique invoice line IDs to fallback-fetch: {len(unique_line_ids_for_fallback)}")
 
-    # Now flatten (this will combine inline data + fallback-mapped data)
-    all_flat_rows = flatten_records(all_records, line_to_data)
+            # Fetch data for the fallback IDs
+            line_to_data = fetch_invoice_data(uid, unique_line_ids_for_fallback)
 
-    logger.info(f"Combining data from all companies: {len(all_flat_rows)} total rows")
-    df = pd.DataFrame(all_flat_rows)
+            # Flatten and combine
+            all_flat_rows = flatten_records(all_records, line_to_data)
+            logger.info(f"Combining data from all companies: {len(all_flat_rows)} total rows")
+            df = pd.DataFrame(all_flat_rows)
 
-    # Create Value column: Final Price * Qty
-    logger.info("Creating Value column (Final Price * Qty)...")
-    df['Value'] = df['Final Price'] * df['Qty']
+            # Create Value column
+            df['Value'] = df['Final Price'] * df['Qty']
 
-    # Convert date columns to date only (discard time)
-    logger.info("Converting date columns to date only...")
-    date_cols = ['Action Date', 'Order Date']
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce').dt.date.astype(str)
+            # Convert date columns to date only
+            date_cols = ['Action Date', 'Order Date']
+            for col in date_cols:
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors='coerce').dt.date.astype(str)
 
-    # Group by all columns except aggregation columns
-    logger.info("Performing groupby aggregation...")
-    agg_columns = ['FG Balance', 'Qty', 'Final Price', 'Value']
-    group_columns = [col for col in df.columns if col not in agg_columns]
-    agg_dict = {
-        'FG Balance': 'sum',
-        'Qty': 'sum',
-        'Final Price': 'mean',
-        'Value': 'sum'
-    }
+            # Group and aggregate
+            agg_columns = ['FG Balance', 'Qty', 'Final Price', 'Value']
+            group_columns = [col for col in df.columns if col not in agg_columns]
+            agg_dict = {
+                'FG Balance': 'sum',
+                'Qty': 'sum',
+                'Final Price': 'mean',
+                'Value': 'sum'
+            }
+            df_grouped = df.groupby(group_columns).agg(agg_dict).reset_index()
+            logger.info(f"Grouped data: {len(df_grouped)} rows, {len(df_grouped.columns)} columns")
 
-    df_grouped = df.groupby(group_columns).agg(agg_dict).reset_index()
-    logger.info(f"Grouped data: {len(df_grouped)} rows, {len(df_grouped.columns)} columns")
+            # Save Excel (optional)
+            df_grouped.to_excel("operation_details_grouped.xlsx", index=False)
+            logger.info("Excel saved successfully.")
 
-    # Save to Excel (optional, for local runs)
-    logger.info("Saving to Excel file...")
-    df_grouped.to_excel("operation_details_grouped.xlsx", index=False)
-    logger.info(f"Excel saved with {len(df_grouped)} rows and {len(df_grouped.columns)} columns.")
+            # Paste to Google Sheet
+            paste_to_gsheet(df_grouped)
 
-    # Paste to Google Sheet (if configured)
-    paste_to_gsheet(df_grouped)
+            logger.info("Script completed successfully.")
+            break  # Success, exit retry loop
 
-    logger.info("Script completed successfully.")
+        except Exception as e:
+            retries += 1
+            logger.error(f"Attempt {retries}/{MAX_RETRIES} failed: {e}")
+            if retries < MAX_RETRIES:
+                logger.info(f"Retrying in {RETRY_DELAY} seconds...")
+                import time; time.sleep(RETRY_DELAY)
+            else:
+                logger.critical(f"All {MAX_RETRIES} attempts failed. Exiting.")
+                raise

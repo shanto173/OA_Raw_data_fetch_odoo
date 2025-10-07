@@ -177,4 +177,20 @@ def run_odoo_fetch():
     paste_to_gsheet(df)
 
 if __name__ == "__main__":
-    run_odoo_fetch()
+    MAX_RETRIES = 10  # Total retries for the whole fetch & paste
+    retries = 0
+
+    while retries < MAX_RETRIES:
+        try:
+            run_odoo_fetch()  # Attempt the whole fetch & paste
+            print("✅ Odoo fetch and Google Sheet update completed successfully.")
+            break  # Success, exit retry loop
+        except Exception as e:
+            retries += 1
+            print(f"❌ Attempt {retries}/{MAX_RETRIES} failed: {e}")
+            if retries < MAX_RETRIES:
+                print("⏳ Retrying in 10 seconds...")
+                time.sleep(10)
+            else:
+                print(f"⚠️ Failed after {MAX_RETRIES} attempts. Exiting.")
+                raise
