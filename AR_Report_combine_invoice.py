@@ -41,7 +41,7 @@ def paste_to_gsheet(df):
     if df.empty:
         print(f"⚠️ Skip: {SHEET_TAB_NAME} DataFrame is empty.")
         return
-    worksheet.batch_clear(["A:BK"])
+    worksheet.batch_clear(["A:BM"])
     set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
     local_tz = pytz.timezone("Asia/Dhaka")
