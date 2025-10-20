@@ -46,7 +46,7 @@ def paste_to_gsheet(df):
 
     local_tz = pytz.timezone("Asia/Dhaka")
     local_time = datetime.now(local_tz).strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.update("BL1", [[f"Last Updated: {local_time}"]])
+    worksheet.update("BN1", [[f"Last Updated: {local_time}"]])
     print(f"✅ Data pasted to Google Sheet ({SHEET_TAB_NAME}), timestamp: {local_time}")
 
 # ================== ODOO FETCH LOGIC ==================
