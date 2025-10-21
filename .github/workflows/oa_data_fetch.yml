@@ -15,6 +15,7 @@ on:
           - APR_Combone_Inv_data_fetch.py
           - FG_Dispatch_data_fetch.py
           - AR_Report_combine_invoice.py
+          - AR_invoice_status_data.py
   schedule:
     - cron: "*/45 * * * *"  # Every 2 hours daily
 
