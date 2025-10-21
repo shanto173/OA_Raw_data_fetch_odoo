@@ -72,3 +72,8 @@ jobs:
             echo "Running AR_Report_combine_invoice.py..."
             python -u AR_Report_combine_invoice.py
           fi
+
+          if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "AR_invoice_status_data.py" ]]; then
+            echo "Running AR_invoice_status_data.py..."
+            python -u AR_invoice_status_data.py
+          fi
