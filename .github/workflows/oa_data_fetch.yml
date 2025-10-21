@@ -16,7 +16,7 @@ on:
           - FG_Dispatch_data_fetch.py
           - AR_Report_combine_invoice.py
   schedule:
-    - cron: "0 */2 * * *"  # Every 2 hours daily
+    - cron: "*/45 * * * *"  # Every 2 hours daily
 
 jobs:
   fetch-oa-data:
