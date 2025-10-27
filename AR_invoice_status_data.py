@@ -89,6 +89,7 @@ def fetch_combine_invoice(uid, batch_size=2000):
         "tentative_acceptance_date": {},
         "tentative_payment_maturity_date": {},
         "amount_total": {},
+        "due_amt": {},
     }
 
     while True:
@@ -154,7 +155,8 @@ def flatten_invoice_summary(records):
         "OA State": get_string_value(r.get("oa_state")),
         "Invoice Status": get_string_value(r.get("invoice_status")),
         "Document State": get_string_value(r.get("docs_state")),
-        "Total Value": r.get("amount_total", 0)
+        "Total Value": r.get("amount_total", 0),
+        "Due Amount": r.get("due_amt", 0)
     } for r in records]
 
 
@@ -172,7 +174,7 @@ def paste_to_gsheet(df):
     if df.empty:
         print(f"⚠️ Skip: {SHEET_TAB_NAME} DataFrame is empty.")
         return
-    worksheet.batch_clear(["A:Q"])
+    worksheet.batch_clear(["A:R"])
     set_with_dataframe(worksheet, df, include_index=False, include_column_header=True)
 
     local_tz = pytz.timezone("Asia/Dhaka")
