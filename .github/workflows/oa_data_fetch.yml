@@ -16,6 +16,7 @@ on:
           - FG_Dispatch_data_fetch.py
           - AR_Report_combine_invoice.py
           - AR_invoice_status_data.py
+          - oa_export_overseas.py
   schedule:
     - cron: "*/4 * * * *"  # Every 2 hours daily
 
@@ -77,4 +78,9 @@ jobs:
           if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "AR_invoice_status_data.py" ]]; then
             echo "Running AR_invoice_status_data.py..."
             python -u AR_invoice_status_data.py
+          fi
+
+          if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "oa_export_overseas.py" ]]; then
+            echo "Running oa_export_overseas.py..."
+            python -u oa_export_overseas.py
           fi
