@@ -475,33 +475,36 @@ if __name__ == "__main__":
             logger.info(f"Combining data from all companies: {len(all_flat_rows)} total rows")
             df = pd.DataFrame(all_flat_rows)
 
-            # Create Value column
-            df['Value'] = df['Final Price'] * df['Qty']
+            if not df.empty:
+                # Create Value column
+                df['Value'] = df['Final Price'] * df['Qty']
 
-            # Convert date columns to date only
-            date_cols = ['Action Date', 'Order Date']
-            for col in date_cols:
-                if col in df.columns:
-                    df[col] = pd.to_datetime(df[col], errors='coerce').dt.date.astype(str)
+                # Convert date columns to date only
+                date_cols = ['Action Date', 'Order Date']
+                for col in date_cols:
+                    if col in df.columns:
+                        df[col] = pd.to_datetime(df[col], errors='coerce').dt.date.astype(str)
 
-            # Group and aggregate
-            agg_columns = ['FG Balance', 'Qty', 'Final Price', 'Value']
-            group_columns = [col for col in df.columns if col not in agg_columns]
-            agg_dict = {
-                'FG Balance': 'sum',
-                'Qty': 'sum',
-                'Final Price': 'mean',
-                'Value': 'sum'
-            }
-            df_grouped = df.groupby(group_columns).agg(agg_dict).reset_index()
-            logger.info(f"Grouped data: {len(df_grouped)} rows, {len(df_grouped.columns)} columns")
+                # Group and aggregate
+                agg_columns = ['FG Balance', 'Qty', 'Final Price', 'Value']
+                group_columns = [col for col in df.columns if col not in agg_columns]
+                agg_dict = {
+                    'FG Balance': 'sum',
+                    'Qty': 'sum',
+                    'Final Price': 'mean',
+                    'Value': 'sum'
+                }
+                df_grouped = df.groupby(group_columns).agg(agg_dict).reset_index()
+                logger.info(f"Grouped data: {len(df_grouped)} rows, {len(df_grouped.columns)} columns")
 
-            # Save Excel (optional)
-            df_grouped.to_excel("operation_details_grouped.xlsx", index=False)
-            logger.info("Excel saved successfully.")
+                # Save Excel (optional)
+                df_grouped.to_excel("operation_details_grouped.xlsx", index=False)
+                logger.info("Excel saved successfully.")
 
-            # Paste to Google Sheet
-            paste_to_gsheet(df_grouped)
+                # Paste to Google Sheet
+                paste_to_gsheet(df_grouped)
+            else:
+                logger.info("No data to process; skipping grouping, export, and sheet update.")
 
             logger.info("Script completed successfully.")
             break  # Success, exit retry loop
