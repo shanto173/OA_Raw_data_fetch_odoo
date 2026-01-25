@@ -408,8 +408,8 @@ def paste_to_gsheet(df):
 
 # --------- Main ---------
 if __name__ == "__main__":
-    MAX_RETRIES = 10  # Total retries for the full pipeline
-    RETRY_DELAY = 5  # Seconds to wait before retry
+    MAX_RETRIES = 2  # Total retries for the full pipeline
+    RETRY_DELAY = 20  # Seconds to wait before retry
     retries = 0
 
     while retries < MAX_RETRIES:
