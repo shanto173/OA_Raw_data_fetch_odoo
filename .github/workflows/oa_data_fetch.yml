@@ -17,8 +17,7 @@ on:
           - AR_Report_combine_invoice.py
           - AR_invoice_status_data.py
           - oa_export_overseas.py
-  schedule:
-    - cron: "0 */10 * * *"  # Every 2 hours daily
+  # Every 2 hours daily
 
 jobs:
   fetch-oa-data:
