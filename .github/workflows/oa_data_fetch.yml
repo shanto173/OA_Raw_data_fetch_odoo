@@ -18,8 +18,7 @@ on:
           - AR_invoice_status_data.py
           - oa_export_overseas.py
   schedule:
-    - cron: '30 22 * * *'   # 22:30 UTC = 4:30 AM Bangladesh  # Every 2 hours daily
-
+    - cron: '30 22 * * *'   # 22:30 UTC = 4:30 AM Bangladesh  
 jobs:
   fetch-oa-data:
     runs-on: ubuntu-latest
