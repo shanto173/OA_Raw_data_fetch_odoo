@@ -250,7 +250,7 @@ if __name__ == "__main__":
     uid = odoo_login()
     company_map = [(1, "OA_ITEM_DF_ZIP"), (3, "OA_ITEM_DF_MT")]
 
-    MAX_RETRIES = 10  # Number of retries per company
+    MAX_RETRIES = 2  # Number of retries per company
 
     for company_id, sheet_tab in company_map:
         print(f"\n{'='*50}")
