@@ -12,7 +12,7 @@ on:
           - ALL
           # - OA_data_fetch_odoo.py
           - OA_ITEM_WISE_data_fetch_odoo.py
-          - APR_Combone_Inv_data_fetch.py
+          # - APR_Combone_Inv_data_fetch.py
           - FG_Dispatch_data_fetch.py
           - AR_Report_combine_invoice.py
           - AR_invoice_status_data.py
@@ -59,10 +59,10 @@ jobs:
             python OA_ITEM_WISE_data_fetch_odoo.py
           fi
 
-          if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "APR_Combone_Inv_data_fetch.py" ]]; then
-            echo "Running APR_Combone_Inv_data_fetch.py..."
-            python APR_Combone_Inv_data_fetch.py
-          fi
+          # if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "APR_Combone_Inv_data_fetch.py" ]]; then
+          #   echo "Running APR_Combone_Inv_data_fetch.py..."
+          #   python APR_Combone_Inv_data_fetch.py
+          # fi
 
           if [[ "$SCRIPT_CHOICE" == "ALL" || "$SCRIPT_CHOICE" == "FG_Dispatch_data_fetch.py" ]]; then
             echo "Running FG_Dispatch_data_fetch.py..."
